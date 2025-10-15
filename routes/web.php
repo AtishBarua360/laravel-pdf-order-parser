@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\PdfUploadController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -16,3 +17,13 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return view('welcome');
 });
+
+Route::get('/upload-pdf', function () {
+    return view('pdf-upload');
+});
+
+
+Route::post('/upload-pdf', [PdfUploadController::class, 'upload'])
+    ->name('upload.pdf');
+
+
