@@ -14,13 +14,15 @@ class AccessPdfAssistant extends PdfClient
         "Stück" => "OTHER",
     ];
 
-    public static function validateFormat (array $lines) {
+    public static function validateFormat(array $lines)
+    {
         return $lines[0] == "Access Logistic GmbH, Amerling 130, A-6233 Kramsach"
             && $lines[2] == "To:"
             && Str::startsWith($lines[4], "Contactperson: ");
     }
 
-    public function processLines (array $lines, ?string $attachment_filename = null) {
+    public function processLines(array $lines, ?string $attachment_filename = null)
+    {
         $tour_li = array_find_key($lines, fn($l) => $l == "Tournumber:");
         $order_reference = trim($lines[$tour_li + 2], '* ');
 
@@ -29,7 +31,7 @@ class AccessPdfAssistant extends PdfClient
 
         $vehicle_li = array_find_key($lines, fn($l) => $l == "Vehicle type:");
         if ($truck_li && $vehicle_li) {
-            $trailer_li = array_find_key($lines, fn($l, $i) => $i>$truck_li && $i<$vehicle_li && preg_match('/^[A-Z]{2}[0-9]{3}( |$)/', $l));
+            $trailer_li = array_find_key($lines, fn($l, $i) => $i > $truck_li && $i < $vehicle_li && preg_match('/^[A-Z]{2}[0-9]{3}( |$)/', $l));
             $trailer_number = explode(' ', $lines[$trailer_li], 2)[0] ?? null;
         }
 
@@ -88,7 +90,8 @@ class AccessPdfAssistant extends PdfClient
         $this->createOrder($data);
     }
 
-    public function extractLocations(array $lines) {
+    public function extractLocations(array $lines)
+    {
         $index = 0;
         $location_size = 6;
         $output = [];
@@ -100,7 +103,8 @@ class AccessPdfAssistant extends PdfClient
         return $output;
     }
 
-    public function extractLocation(array $lines) {
+    public function extractLocation(array $lines)
+    {
         $datetime = $lines[2];
         $location = $lines[4];
 
@@ -110,7 +114,8 @@ class AccessPdfAssistant extends PdfClient
         ];
     }
 
-    public function parseDatetime(string $datetime) {
+    public function parseDateTime(string $datetime)
+    {
         preg_match('/^([0-9\.]+) ?([0-9:]+)?-?([0-9:]+)?$/', $datetime, $matches);
         if ($matches) {
             $date_start = $matches[1];
@@ -138,12 +143,13 @@ class AccessPdfAssistant extends PdfClient
         return $output;
     }
 
-    public function parseCompanyAddress(string $location) {
+    public function parseCompanyAddress(string $location)
+    {
         preg_match('/^(.+?)\s*, +(.+?)\s*, +([A-Z]{1,2}-?[0-9]{4,}) +(.+)$/ui', $location, $matches);
         $company = $matches[1];
-        $street  = $matches[2];
-        $postal  = $matches[3];
-        $city    = $matches[4];
+        $street = $matches[2];
+        $postal = $matches[3];
+        $city = $matches[4];
 
         $country = preg_replace('/[^A-Z]/ui', '', $postal);
         $country = GeonamesCountry::getIso($country);
@@ -160,7 +166,8 @@ class AccessPdfAssistant extends PdfClient
         ];
     }
 
-    public function extractCargos(array $lines) {
+    public function extractCargos(array $lines)
+    {
         $load_li = array_find_key($lines, fn($l) => $l == "Load:");
         $title = $lines[$load_li + 1];
 
@@ -177,7 +184,7 @@ class AccessPdfAssistant extends PdfClient
             ? uncomma($lines[$weight_li + 1])
             : null;
 
-        $ldm_li = array_find_key($lines, fn($l) => $l == "Loadingmeter:");
+        $ldm_li = array_find_key($lines, callback: fn($l) => $l == "Loadingmeter:");
         $ldm = $lines[$ldm_li + 1]
             ? uncomma($lines[$ldm_li + 1])
             : null;
@@ -194,17 +201,20 @@ class AccessPdfAssistant extends PdfClient
 
         $number = join('; ', array_filter([$load_ref, $unload_ref]));
 
-        return [[
-            'title' => $title,
-            'number' => $number,
-            'package_count' => $package_count ?? 1,
-            'package_type' => $package_type,
-            'ldm' => $ldm,
-            'weight' => $weight,
-        ]];
+        return [
+            [
+                'title' => $title,
+                'number' => $number,
+                'package_count' => $package_count ?? 1,
+                'package_type' => $package_type,
+                'ldm' => $ldm,
+                'weight' => $weight,
+            ]
+        ];
     }
 
-    public function mapPackageType(string $type) {
+    public function mapPackageType(string $type)
+    {
         $package_type = static::PACKAGE_TYPE_MAP[$type] ?? "PALLET_OTHER";
         return trans("package_type.{$package_type}");
     }
