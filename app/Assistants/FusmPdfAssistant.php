@@ -34,6 +34,7 @@ class FusmPdfAssistant extends PdfClient
                 'street_address' => $lines[24] . ', ' . $lines[25]
             ]
         ];
+        $cargos = [];
 
         $loading_li = null;
         foreach ($lines as $index => $item) {
@@ -62,15 +63,23 @@ class FusmPdfAssistant extends PdfClient
             array_unshift($customer_location_data, $company_name);
         }
         $customer_location = $this->extractCustomerAddress($customer_location_data);
+
         $loading_locations = $this->extractLocations(
             array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
         );
+
+        $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         $destination_locations = $this->extractLocations(
-            array_slice($lines, $destination_li + 1, $observation_li - $destination_li)
+            $destination_location_data
         );
-        dump('customer_location : ', $customer_location);
-        dump('loading_locations : ', $loading_locations);
-        dump('destination_locations : ', $destination_locations);
+
+        $cargos = $this->getCargoData(
+            $destination_location_data
+        );
+        // dump('customer_location : ', $customer_location);
+        // dump('loading_locations : ', $loading_locations);
+        // dump('destination_locations : ', $destination_locations);
+        dd('cargos : ', $cargos);
 
         //     'details' => [
         //         'street_address' => 'Amerling 130',
@@ -145,6 +154,44 @@ class FusmPdfAssistant extends PdfClient
         // );
 
         // $this->createOrder($data);
+    }
+
+    private function getCargoData(array $cargoData): array
+    {
+        $cargos = ['package_type' => 'EPAL'];
+        $cargo_raw_data = [];
+        foreach ($cargoData as $index => $item) {
+            if ($item === 'LM . . . :') {
+                $start_item_li = $index;
+            } else if ($item === 'Pal. nb. :') {
+                array_splice($cargoData, $index, 1);
+            } else if ($item === 'M. nature:') {
+                $end_item_li = $index;
+            } else if ($item === 'OT :') {
+                array_splice($cargoData, $index - 1, 4);
+            }
+        }
+
+        $total_key = $end_item_li - $start_item_li;
+        for ($i = $start_item_li; $i <= $end_item_li; $i++) {
+
+            $cargo_raw_data[$cargoData[$i]] = $cargoData[$i + $total_key + 1];
+        }
+        foreach ($cargo_raw_data as $index => $item) {
+            if ($index === 'M. nature:') {
+                $cargos['title'] = $item;
+            } else if ($index === 'Weight . :') {
+                $cargos['weight'] = $item;
+            } else if ($index === 'LM . . . :') {
+                $cargos['ldm'] = $item;
+            } else if ($index === 'Parc. nb :') {
+                $cargos['package_count'] = $item;
+            } else if ($index === 'Type :') {
+                $cargos['package_type'] = $item;
+            }
+        }
+
+        return $cargos;
     }
 
     private function extractCustomerAddress(array $customerData): array
