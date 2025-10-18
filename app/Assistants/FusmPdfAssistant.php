@@ -181,11 +181,11 @@ class FusmPdfAssistant extends PdfClient
             if ($index === 'M. nature:') {
                 $cargos['title'] = $item;
             } else if ($index === 'Weight . :') {
-                $cargos['weight'] = $item;
+                $cargos['weight'] = uncomma($item);
             } else if ($index === 'LM . . . :') {
-                $cargos['ldm'] = $item;
+                $cargos['ldm'] = uncomma($item);
             } else if ($index === 'Parc. nb :') {
-                $cargos['package_count'] = $item;
+                $cargos['package_count'] = empty($item) ? 1 : uncomma($item);
             } else if ($index === 'Type :') {
                 $cargos['package_type'] = $item;
             }
