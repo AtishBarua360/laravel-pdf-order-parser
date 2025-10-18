@@ -26,6 +26,7 @@ class FusmPdfAssistant extends PdfClient
     {
         $attachment_filenames = [mb_strtolower($attachment_filename ?? '')];
 
+        $company_name = 'TRANSALLIANCE TS LTD';
         $customer = [
             'side' => 'none',
             'details' => [
@@ -38,7 +39,11 @@ class FusmPdfAssistant extends PdfClient
         foreach ($lines as $index => $item) {
 
             if (Str::startsWith($item, 'REF.:')) {
+                $ref_li = $index;
                 $order_reference = trim(str_replace('REF.:', '', $item));
+            } else if (Str::startsWith($item, 'VAT NUM:') && !isset($vat_li)) {
+                $vat_li = $index + 2;
+
             } else if ($item === 'SHIPPING PRICE') {
                 $freight_price = preg_replace('/[^0-9,\.]/', '', $lines[$index + 1]);
                 $freight_price = uncomma($freight_price);
@@ -52,14 +57,21 @@ class FusmPdfAssistant extends PdfClient
                 $observation_li = $index;
             }
         }
+        $customer_location_data = array_slice($lines, $vat_li + 1, $ref_li - $vat_li);
+        if ($customer_location_data[0] !== $company_name) {
+            array_unshift($customer_location_data, $company_name);
+        }
+        $customer_location = $this->extractCustomerAddress($customer_location_data);
         $loading_locations = $this->extractLocations(
             array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
         );
         $destination_locations = $this->extractLocations(
             array_slice($lines, $destination_li + 1, $observation_li - $destination_li)
         );
+        dump('customer_location : ', $customer_location);
+        dump('loading_locations : ', $loading_locations);
+        dump('destination_locations : ', $destination_locations);
 
-        dump($destination_locations);
         //     'details' => [
         //         'street_address' => 'Amerling 130',
         //         'city' => 'Kramsach',
@@ -135,6 +147,45 @@ class FusmPdfAssistant extends PdfClient
         // $this->createOrder($data);
     }
 
+    private function extractCustomerAddress(array $customerData): array
+    {
+        $company_address = [];
+        $time_interval = [];
+
+        foreach ($customerData as $index => $item) {
+
+            if (Str::startsWith($item, 'Contact:')) {
+                $contact_person = trim(str_replace('Contact:', '', $item));
+            } else if (Str::startsWith($item, 'Tel :')) {
+
+                $telephone_li = $index;
+            } else if (Str::startsWith($item, 'VAT NUM:')) {
+
+                $vat_code = trim(str_replace('VAT NUM:', '', $item));
+            } else if ($item === 'E-mail :') {
+
+                $email = $customerData[$index + 1];
+            } else if ($this->isDateTimeString(($item))) {
+                if (isset($time_interval['datetime_from'])) {
+                    $time_interval['datetime_to'] = $item;
+                } else {
+                    $time_interval['datetime_from'] = $item;
+                }
+
+            }
+
+        }
+        $onBlock = array_slice($customerData, 0, $telephone_li);
+        $company_address = $this->parseAddressBlock($onBlock);
+        $company_address['contact_person'] = $contact_person;
+        $company_address['email'] = $email;
+        $company_address['vat_code'] = $vat_code;
+        $loading_locations = [
+            'company_address' => $company_address,
+            'time_interval' => $time_interval
+        ];
+        return $loading_locations;
+    }
     private function extractLocations(array $loadingData): array
     {
         $company_address = [];
@@ -142,7 +193,7 @@ class FusmPdfAssistant extends PdfClient
         foreach ($loadingData as $index => $item) {
             if ($item === 'ON:') {
                 $on_li = $index;
-            } else if (Str::startsWith('Contact:', $item)) {
+            } else if (Str::startsWith($item, 'Contact:')) {
                 $contact_li = $index;
 
                 $contact_person = trim(str_replace('Contact:', '', $item));
@@ -157,8 +208,6 @@ class FusmPdfAssistant extends PdfClient
 
         }
         $onBlock = array_slice($loadingData, $on_li + 2, $contact_li - $on_li - 2);
-        // ✅ Join all values into a single comma-separated string
-        // $addressString = implode(', ', array_filter(array_map('trim', $onBlock)));
         $company_address = $this->parseAddressBlock($onBlock);
         $company_address['contact_person'] = $contact_person;
         $loading_locations = [
@@ -317,15 +366,28 @@ class FusmPdfAssistant extends PdfClient
     private function parseAddressBlock(array $lines): array
     {
         $company = trim($lines[0] ?? '');
-        $streetParts = array_filter([
-            trim($lines[1] ?? ''),
-            trim($lines[2] ?? '')
-        ]);
-
-        $lastPart = trim($lines[3] ?? '');
+        $streetParts = [];
         $country = $postal = $city = null;
 
-        // Match GB-SS17 9DY STANFORD or -13230 PORT-SAINT-LOUIS-DU-RHONE
+        // Determine structure based on number of lines
+        if (count($lines) === 4) {
+            // 4 line format , then 1,2 index will combine and make a address
+            $streetParts = array_filter([
+                trim($lines[1] ?? ''),
+                trim($lines[2] ?? '')
+            ]);
+            $lastPart = trim($lines[3] ?? '');
+        } elseif (count($lines) === 3) {
+            // 3-line format
+            $streetParts = [trim($lines[1] ?? '')];
+            $lastPart = trim($lines[2] ?? '');
+        } else {
+            // Fallback: treat everything except first as address
+            $streetParts = array_slice($lines, 1, -1);
+            $lastPart = end($lines);
+        }
+
+        // Detect patterns like "country, zip and city"
         if (
             preg_match(
                 '/^(?:(?<country>[A-Z]{2})[- ]?)?(?<postal>[A-Z0-9\- ]{3,10})\s+(?<city>[A-ZÀ-ÿ\-\s]+)$/iu',
@@ -335,7 +397,8 @@ class FusmPdfAssistant extends PdfClient
         ) {
             $country = strtoupper($m['country'] ?? '');
             if (!$country && str_starts_with($lastPart, '-')) {
-                $country = 'FR'; // default for French style (no prefix)
+                $country = preg_replace('/[^A-Z]/ui', '', $country);
+                $country = GeonamesCountry::getIso($country);
             }
 
             $postal = trim($m['postal']);
@@ -355,6 +418,7 @@ class FusmPdfAssistant extends PdfClient
             'contact_person' => null,
         ];
     }
+
 
 
 
