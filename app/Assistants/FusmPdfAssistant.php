@@ -25,7 +25,8 @@ class FusmPdfAssistant extends PdfClient
     public function processLines(array $lines, ?string $attachment_filename = null)
     {
         $attachment_filenames = [mb_strtolower($attachment_filename ?? '')];
-
+        $truck_number = null;
+        $trailer_number = null;
         $company_name = 'TRANSALLIANCE TS LTD';
         $customer = [
             'side' => 'none',
@@ -44,6 +45,12 @@ class FusmPdfAssistant extends PdfClient
                 $order_reference = trim(str_replace('REF.:', '', $item));
             } else if (Str::startsWith($item, 'VAT NUM:') && !isset($vat_li)) {
                 $vat_li = $index + 2;
+
+            } else if (Str::startsWith($item, 'Tract.registr.:')) {
+                $truck_number = trim(str_replace('Tract.registr.:', '', $item));
+
+            } else if (Str::startsWith($item, 'Trail.registr.:')) {
+                $trailer_number = trim(str_replace('Trail.registr.:', '', $item));
 
             } else if ($item === 'SHIPPING PRICE') {
                 $freight_price = preg_replace('/[^0-9,\.]/', '', $lines[$index + 1]);
@@ -67,19 +74,17 @@ class FusmPdfAssistant extends PdfClient
         $loading_locations = $this->extractLocations(
             array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
         );
-
         $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         $destination_locations = $this->extractLocations(
             $destination_location_data
         );
 
-        $cargos = $this->getCargoData(
+        $cargos[] = $this->getCargoData(
             $destination_location_data
         );
-        // dump('customer_location : ', $customer_location);
-        // dump('loading_locations : ', $loading_locations);
-        // dump('destination_locations : ', $destination_locations);
-        dd('cargos : ', $cargos);
+
+        $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
+
 
         //     'details' => [
         //         'street_address' => 'Amerling 130',
@@ -141,19 +146,19 @@ class FusmPdfAssistant extends PdfClient
 
         // $attachment_filenames = [mb_strtolower($attachment_filename ?? '')];
 
-        // $data = compact(
-        //     'customer',
-        //     'loading_locations',
-        //     'destination_locations',
-        //     'attachment_filenames',
-        //     'cargos',
-        //     'order_reference',
-        //     'transport_numbers',
-        //     'freight_price',
-        //     'freight_currency',
-        // );
+        $data = compact(
+            'customer',
+            'loading_locations',
+            'destination_locations',
+            'attachment_filenames',
+            'cargos',
+            'order_reference',
+            'transport_numbers',
+            'freight_price',
+            'freight_currency',
+        );
 
-        // $this->createOrder($data);
+        $this->createOrder($data);
     }
 
     private function getCargoData(array $cargoData): array
@@ -258,8 +263,10 @@ class FusmPdfAssistant extends PdfClient
         $company_address = $this->parseAddressBlock($onBlock);
         $company_address['contact_person'] = $contact_person;
         $loading_locations = [
-            'company_address' => $company_address,
-            'time_interval' => $time_interval
+            [
+                'company_address' => $company_address,
+                'time_interval' => $time_interval
+            ]
         ];
         return $loading_locations;
     }
@@ -452,18 +459,17 @@ class FusmPdfAssistant extends PdfClient
             $city = ucwords(strtolower(trim($m['city'])));
         }
 
-        return [
+        $res = [
             'company' => $company,
             'title' => $company,
             'street_address' => implode(', ', $streetParts),
             'city' => $city,
             'postal_code' => $postal,
-            'country' => $country,
-            'company_code' => null,
-            'vat_code' => null,
-            'email' => null,
-            'contact_person' => null,
         ];
+        if ($country) {
+            $res['country'] = $country;
+        }
+        return $res;
     }
 
 
