@@ -370,9 +370,15 @@ class ToluPdfAssistant extends PdfClient
             $postal = $postalLine;
         }
         //Need to update
-        if (preg_match('/\b(UK|GB|DE|FR|ES|NL|BE|IT|US)\b/i', implode(' ', $lines), $m)) {
-            $country = GeonamesCountry::getIso(strtoupper($m[1]));
-
+        $country = null;
+        foreach ($lines as $item) {
+            $words = explode(' ', $item);
+            foreach ($words as $word) {
+                if (GeonamesCountry::getIso(strtoupper($word)) !== null) {
+                    $country = GeonamesCountry::getIso(strtoupper($word));
+                    break;
+                }
+            }
         }
 
         $streetParts = array_slice($lines, 1, ($postalIndex > 1 ? $postalIndex - 2 : 2));
@@ -385,7 +391,7 @@ class ToluPdfAssistant extends PdfClient
             'postal_code' => $postal,
         ];
 
-        if ($country) {
+        if ($country !== null) {
             $res['country'] = $country;
         }
 

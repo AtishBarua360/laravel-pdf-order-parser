@@ -928,11 +928,12 @@ class GeonamesCountry
         'S' => 'SE',
     ];
 
-    public static function getIso (string $name) : ?string {
+    public static function getIso(string $name): ?string
+    {
         if (in_array($name, static::NAME_TO_ISO)) {
             return $name;
-        } else if (isset(static::NAME_TO_ISO[$name])) {
-            return static::NAME_TO_ISO[$name];
+        } else if (isset(static::NAME_TO_ISO[ucwords(strtolower($name))])) {
+            return static::NAME_TO_ISO[ucwords(strtolower($name))];
         } else if (isset(static::SHORT_COUNTRY_CODES[$name])) {
             return static::SHORT_COUNTRY_CODES[$name];
         } else {

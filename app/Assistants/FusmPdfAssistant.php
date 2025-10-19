@@ -78,7 +78,6 @@ class FusmPdfAssistant extends PdfClient
         $destination_locations = $this->extractLocations(
             $destination_location_data
         );
-
         $cargos[] = $this->getCargoData(
             $destination_location_data
         );
@@ -449,7 +448,7 @@ class FusmPdfAssistant extends PdfClient
                 $m
             )
         ) {
-            $country = strtoupper($m['country'] ?? '');
+            $country = strtoupper($m['country'] ?? null);
             if (!$country && str_starts_with($lastPart, '-')) {
                 $country = preg_replace('/[^A-Z]/ui', '', $country);
                 $country = GeonamesCountry::getIso($country);
@@ -468,6 +467,22 @@ class FusmPdfAssistant extends PdfClient
         ];
         if ($country) {
             $res['country'] = $country;
+        } else {
+            foreach ($lines as $item) {
+                $words = explode(' ', $item);
+
+                foreach ($words as $index => $word) {
+                    if (GeonamesCountry::getIso(strtoupper($word)) !== null) {
+                        $country = GeonamesCountry::getIso(strtoupper($word));
+                        $res['country'] = $country;
+
+                        break;
+                    }
+                }
+                if (!is_null($country)) {
+                    break;
+                }
+            }
         }
         return $res;
     }
