@@ -8,6 +8,8 @@ use Illuminate\Support\Str;
 
 class ToluPdfAssistant extends PdfClient
 {
+
+    private const COMPANY_NAME = 'ZIEGLER UK LTD';
     const POSSIBLE_CURRENCIES = ["EUR", "USD", "GBP", "PLN", "ZAR"];
 
     const PACKAGE_TYPE_MAP = [
@@ -18,8 +20,7 @@ class ToluPdfAssistant extends PdfClient
 
     public static function validateFormat(array $lines)
     {
-        return $lines[0] == "Date/Time :"
-            && $lines[4] == "CHARTERING CONFIRMATION";
+        return $lines[0] == self::COMPANY_NAME;
     }
 
     public function processLines(array $lines, ?string $attachment_filename = null)
@@ -27,22 +28,23 @@ class ToluPdfAssistant extends PdfClient
         $attachment_filenames = [mb_strtolower($attachment_filename ?? '')];
         $truck_number = null;
         $trailer_number = null;
-        $company_name = 'TRANSALLIANCE TS LTD';
+        $company_name = self::COMPANY_NAME;
         $customer = [
             'side' => 'none',
             'details' => [
-                'company' => $lines[14],
-                'street_address' => $lines[24] . ', ' . $lines[25]
+                'company' => $company_name,
             ]
         ];
+
         $cargos = [];
 
         $loading_li = null;
         foreach ($lines as $index => $item) {
 
-            if (Str::startsWith($item, 'REF.:')) {
+
+            if (Str::startsWith($item, 'Ziegler Ref')) {
                 $ref_li = $index;
-                $order_reference = trim(str_replace('REF.:', '', $item));
+                $order_reference = trim($item[$index + 2]);
             } else if (Str::startsWith($item, 'VAT NUM:') && !isset($vat_li)) {
                 $vat_li = $index + 2;
 
@@ -65,100 +67,39 @@ class ToluPdfAssistant extends PdfClient
                 $observation_li = $index;
             }
         }
-        $customer_location_data = array_slice($lines, $vat_li + 1, $ref_li - $vat_li);
+        $customer_location_data = array_slice($lines, 0, $ref_li);
         if ($customer_location_data[0] !== $company_name) {
             array_unshift($customer_location_data, $company_name);
         }
         $customer_location = $this->extractCustomerAddress($customer_location_data);
+        dd($customer_location);
+        // $loading_locations = $this->extractLocations(
+        //     array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
+        // );
+        // $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
+        // $destination_locations = $this->extractLocations(
+        //     $destination_location_data
+        // );
 
-        $loading_locations = $this->extractLocations(
-            array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
-        );
-        $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
-        $destination_locations = $this->extractLocations(
-            $destination_location_data
-        );
-
-        $cargos[] = $this->getCargoData(
-            $destination_location_data
-        );
-
-        $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
-
-
-        //     'details' => [
-        //         'street_address' => 'Amerling 130',
-        //         'city' => 'Kramsach',
-        //         'postal_code' => '6233',
-        //         'country' => 'AT',
-        //         'vat_code' => 'ATU74076812',
-        //         'contact_person' => $contact,
-        //     ],
-
-
-
-        // $truck_li = array_find_key($lines, fn($l) => $l == "Truck, trailer:");
-        // $truck_number = $lines[$truck_li + 2];
-
-        // $vehicle_li = array_find_key($lines, fn($l) => $l == "Vehicle type:");
-        // if ($truck_li && $vehicle_li) {
-        //     $trailer_li = array_find_key($lines, fn($l, $i) => $i > $truck_li && $i < $vehicle_li && preg_match('/^[A-Z]{2}[0-9]{3}( |$)/', $l));
-        //     $trailer_number = explode(' ', $lines[$trailer_li], 2)[0] ?? null;
-        // }
+        // $cargos[] = $this->getCargoData(
+        //     $destination_location_data
+        // );
 
         // $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
 
-        // $freight_li = array_find_key($lines, fn($l) => $l == "Freight rate in €:");
-        // $freight_price = $lines[$freight_li + 2];
-        // $freight_price = preg_replace('/[^0-9,\.]/', '', $freight_price);
-        // $freight_price = uncomma($freight_price);
-        // $freight_currency = 'EUR';
-
-        // $loading_li = array_find_key($lines, fn($l) => $l == "Loading sequence:");
-        // $unloading_li = array_find_key($lines, fn($l) => $l == "Unloading sequence:");
-        // $regards_li = array_find_key($lines, fn($l) => $l == "Best regards");
-
-        // $loading_locations = $this->extractLocations(
-        //     array_slice($lines, $loading_li + 1, $unloading_li - 1 - $loading_li)
+        // $data = compact(
+        //     'customer',
+        //     'loading_locations',
+        //     'destination_locations',
+        //     'attachment_filenames',
+        //     'cargos',
+        //     'order_reference',
+        //     'transport_numbers',
+        //     'freight_price',
+        //     'freight_currency',
         // );
 
-        // $destination_locations = $this->extractLocations(
-        //     array_slice($lines, $unloading_li + 1, $regards_li - 1 - $unloading_li)
-        // );
-
-        // $contact_li = array_find_key($lines, fn($l) => Str::startsWith($l, 'Contactperson: '));
-        // $contact = explode(': ', $lines[$contact_li], 2)[1];
-
-        // $customer = [
-        //     'side' => 'none',
-        //     'details' => [
-        //         'company' => 'Access Logistic GmbH',
-        //         'street_address' => 'Amerling 130',
-        //         'city' => 'Kramsach',
-        //         'postal_code' => '6233',
-        //         'country' => 'AT',
-        //         'vat_code' => 'ATU74076812',
-        //         'contact_person' => $contact,
-        //     ],
-        // ];
-
-        // $cargos = $this->extractCargos($lines);
-
-        // $attachment_filenames = [mb_strtolower($attachment_filename ?? '')];
-
-        $data = compact(
-            'customer',
-            'loading_locations',
-            'destination_locations',
-            'attachment_filenames',
-            'cargos',
-            'order_reference',
-            'transport_numbers',
-            'freight_price',
-            'freight_currency',
-        );
-
-        $this->createOrder($data);
+        // $this->createOrder($data);
     }
 
     private function getCargoData(array $cargoData): array
@@ -198,46 +139,40 @@ class ToluPdfAssistant extends PdfClient
 
         return $cargos;
     }
-
     private function extractCustomerAddress(array $customerData): array
     {
         $company_address = [];
         $time_interval = [];
 
+        $contact_person = null;
+        $email = null;
+        $vat_code = null;
+        $telephone_li = null;
+
         foreach ($customerData as $index => $item) {
+            $item = trim($item);
 
             if (Str::startsWith($item, 'Contact:')) {
-                $contact_person = trim(str_replace('Contact:', '', $item));
-            } else if (Str::startsWith($item, 'Tel :')) {
-
+                $contact_person = trim(Str::after($item, 'Contact:'));
+            } elseif (Str::startsWith($item, 'Telephone')) {
                 $telephone_li = $index;
-            } else if (Str::startsWith($item, 'VAT NUM:')) {
-
-                $vat_code = trim(str_replace('VAT NUM:', '', $item));
-            } else if ($item === 'E-mail :') {
-
-                $email = $customerData[$index + 1];
-            } else if ($this->isDateTimeString(($item))) {
-                if (isset($time_interval['datetime_from'])) {
-                    $time_interval['datetime_to'] = $item;
-                } else {
-                    $time_interval['datetime_from'] = $item;
-                }
-
             }
-
         }
-        $onBlock = array_slice($customerData, 0, $telephone_li);
-        $company_address = $this->parseAddressBlock($onBlock);
+        // If we didn’t find a Telephone line, take all non-empty lines
+        $addressLines = array_slice($customerData, 0, $telephone_li);
+
+        $company_address = $this->parseAddressBlock($addressLines);
+
         $company_address['contact_person'] = $contact_person;
         $company_address['email'] = $email;
         $company_address['vat_code'] = $vat_code;
-        $loading_locations = [
+
+        return [
             'company_address' => $company_address,
             'time_interval' => $time_interval
         ];
-        return $loading_locations;
     }
+
     private function extractLocations(array $loadingData): array
     {
         $company_address = [];
@@ -419,58 +354,44 @@ class ToluPdfAssistant extends PdfClient
     }
     private function parseAddressBlock(array $lines): array
     {
+        $lines = array_values(array_filter($lines, fn($l) => (trim($l) !== '') && ($l !== 'BOOKING') && ($l !== 'INSTRUCTION')));
         $company = trim($lines[0] ?? '');
+        $postal = $city = $country = null;
         $streetParts = [];
-        $country = $postal = $city = null;
 
-        // Determine structure based on number of lines
-        if (count($lines) === 4) {
-            // 4 line format , then 1,2 index will combine and make a address
-            $streetParts = array_filter([
-                trim($lines[1] ?? ''),
-                trim($lines[2] ?? '')
-            ]);
-            $lastPart = trim($lines[3] ?? '');
-        } elseif (count($lines) === 3) {
-            // 3-line format
-            $streetParts = [trim($lines[1] ?? '')];
-            $lastPart = trim($lines[2] ?? '');
-        } else {
-            // Fallback: treat everything except first as address
-            $streetParts = array_slice($lines, 1, -1);
-            $lastPart = end($lines);
+        $postalIndex = collect($lines)->search(
+            fn($line) =>
+            preg_match('/[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}|[0-9]{4,6}|[A-Z]{2}-[0-9]{4,6}/i', $line)
+        );
+
+        if ($postalIndex !== false) {
+            $postalLine = trim($lines[$postalIndex]);
+            $city = $lines[$postalIndex - 1] ?? null;
+            $postal = $postalLine;
+        }
+        //Need to update
+        if (preg_match('/\b(UK|GB|DE|FR|ES|NL|BE|IT|US)\b/i', implode(' ', $lines), $m)) {
+            $country = GeonamesCountry::getIso(strtoupper($m[1]));
+
         }
 
-        // Detect patterns like "country, zip and city"
-        if (
-            preg_match(
-                '/^(?:(?<country>[A-Z]{2})[- ]?)?(?<postal>[A-Z0-9\- ]{3,10})\s+(?<city>[A-ZÀ-ÿ\-\s]+)$/iu',
-                ltrim($lastPart, '- '),
-                $m
-            )
-        ) {
-            $country = strtoupper($m['country'] ?? '');
-            if (!$country && str_starts_with($lastPart, '-')) {
-                $country = preg_replace('/[^A-Z]/ui', '', $country);
-                $country = GeonamesCountry::getIso($country);
-            }
-
-            $postal = trim($m['postal']);
-            $city = ucwords(strtolower(trim($m['city'])));
-        }
+        $streetParts = array_slice($lines, 1, ($postalIndex > 1 ? $postalIndex - 2 : 2));
 
         $res = [
             'company' => $company,
             'title' => $company,
-            'street_address' => implode(', ', $streetParts),
-            'city' => $city,
+            'street_address' => implode(', ', array_filter($streetParts)),
+            'city' => $city ? ucwords(strtolower(trim($city))) : null,
             'postal_code' => $postal,
         ];
+
         if ($country) {
             $res['country'] = $country;
         }
+
         return $res;
     }
+
 
 
 
