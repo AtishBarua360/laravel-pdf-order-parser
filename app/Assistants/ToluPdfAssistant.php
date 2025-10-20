@@ -452,6 +452,7 @@ class ToluPdfAssistant extends PdfClient
         );
         if ($postalIndex !== false) {
             $postalLine = trim($lines[$postalIndex]);
+
             // 🟢 Case 1: City before postal ("Leighton Buzzard, LU7 4UH")
             if (preg_match('/^(.*?)[, ]+([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})$/i', $postalLine, $matches)) {
                 $city = trim($matches[1]);
@@ -462,12 +463,19 @@ class ToluPdfAssistant extends PdfClient
                 $postal = trim($matches[1]);
                 $city = trim($matches[2]);
             }
-            // Fallback: separate lines
+            // 🆕 Case 3: Country-prefixed postal ("ENNERY, FR-57365")
+            else if (preg_match('/^(.*?)[, ]+([A-Z]{2})[-\s]?(\d{4,6})$/i', $postalLine, $matches)) {
+                $city = trim($matches[1]);
+                $country = strtoupper(trim($matches[2]));
+                $postal = trim($matches[3]);
+            }
+            // Fallback
             else {
                 $city = $lines[$postalIndex - 1] ?? null;
                 $postal = $postalLine;
             }
         }
+
         dd($city);
         // Country detection
         foreach ($lines as $item) {
