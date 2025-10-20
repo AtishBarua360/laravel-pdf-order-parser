@@ -38,6 +38,7 @@ class ToluPdfAssistant extends PdfClient
 
         $cargos = [];
         $loading_locations = [];
+        $destination_locations = [];
         $loading_li = [];
         $destination_li = [];
 
@@ -65,26 +66,32 @@ class ToluPdfAssistant extends PdfClient
                 $loading_li[] = $index;
             } else if ($item === 'Clearance' || $item === 'Delivery') {
                 $destination_li[] = $index;
-            } else if ($item === 'Observations :') {
-                $observation_li = $index;
+            } else if (Str::startsWith($item, '- Payment')) {
+                $destination_end_li = $index;
             }
         }
         $customer_location_data = array_slice($lines, 0, $ref_li);
         if ($customer_location_data[0] !== $company_name) {
             array_unshift($customer_location_data, $company_name);
         }
-        $customer_location = $this->extractCustomerAddress($customer_location_data);
+        // $customer_location = $this->extractCustomerAddress($customer_location_data);
 
-        foreach ($loading_li as $index => $loadingLi) {
+        // foreach ($loading_li as $index => $loadingLi) {
 
-            $end_li = $loading_li[$index + 1] ?? $destination_li[0];
-            $loading_locations[] = $this->extractLocations(
-                array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3)
+        //     $end_li = $loading_li[$index + 1] ?? $destination_li[0];
+        //     $loading_locations[] = $this->extractLocations(
+        //         array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3)
+        //     );
+        // }
+        foreach ($destination_li as $index => $destinationLi) {
+
+            $end_li = $destination_li[$index + 1] ?? $destination_end_li;
+            $destination_locations[] = $this->extractLocations(
+                array_slice($lines, $destinationLi + 1, $end_li - $destinationLi - 2)
             );
-
         }
 
-        dd($customer_location);
+        dd($destination_locations);
         // $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         // $destination_locations = $this->extractLocations(
         //     $destination_location_data
@@ -199,7 +206,10 @@ class ToluPdfAssistant extends PdfClient
             // Detect REF line
             elseif (
                 ($item !== 'REF') &&
-                (Str::startsWith(strtoupper($item), 'REF') || Str::contains(strtolower($item), 'pick up t1'))
+                (Str::startsWith(strtoupper($item), 'REF')
+                    || Str::contains(strtolower($item), 'pick up t1')
+                    || Str::contains(strtolower($item), 'delivery slot will be provided soon')
+                )
             ) {
                 if (!isset($ref_li)) {
                     $ref_li = $index;
@@ -440,10 +450,8 @@ class ToluPdfAssistant extends PdfClient
             fn($line) =>
             preg_match('/[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}|[0-9]{4,6}|[A-Z]{2}-[0-9]{4,6}/i', $line)
         );
-
         if ($postalIndex !== false) {
             $postalLine = trim($lines[$postalIndex]);
-
             // 🟢 Case 1: City before postal ("Leighton Buzzard, LU7 4UH")
             if (preg_match('/^(.*?)[, ]+([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})$/i', $postalLine, $matches)) {
                 $city = trim($matches[1]);
@@ -460,20 +468,25 @@ class ToluPdfAssistant extends PdfClient
                 $postal = $postalLine;
             }
         }
-
+        dd($city);
         // Country detection
         foreach ($lines as $item) {
             foreach (explode(' ', $item) as $word) {
                 if (GeonamesCountry::getIso(strtoupper($word)) !== null) {
                     $country = GeonamesCountry::getIso(strtoupper($word));
-                    break 2;
+                    break;
                 }
             }
         }
-
         // Collect street lines (excluding company and city/postal)
-        $streetParts = array_slice($lines, 1, ($postalIndex > 1 ? $postalIndex - 2 : 2));
+        if (count($lines) > 3) {
+            $streetParts = array_slice($lines, 1, ($postalIndex > 1 ? $postalIndex - 2 : 2));
 
+        } else {
+            if ($postalIndex === 2) {
+                $streetParts = [$lines[1]];
+            }
+        }
         $res = [
             'company' => $company,
             'title' => $company,
