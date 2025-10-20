@@ -74,15 +74,15 @@ class ToluPdfAssistant extends PdfClient
         if ($customer_location_data[0] !== $company_name) {
             array_unshift($customer_location_data, $company_name);
         }
-        // $customer_location = $this->extractCustomerAddress($customer_location_data);
+        $customer_location = $this->extractCustomerAddress($customer_location_data);
 
-        // foreach ($loading_li as $index => $loadingLi) {
+        foreach ($loading_li as $index => $loadingLi) {
 
-        //     $end_li = $loading_li[$index + 1] ?? $destination_li[0];
-        //     $loading_locations[] = $this->extractLocations(
-        //         array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3)
-        //     );
-        // }
+            $end_li = $loading_li[$index + 1] ?? $destination_li[0];
+            $loading_locations[] = $this->extractLocations(
+                array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3)
+            );
+        }
         foreach ($destination_li as $index => $destinationLi) {
 
             $end_li = $destination_li[$index + 1] ?? $destination_end_li;
@@ -91,7 +91,7 @@ class ToluPdfAssistant extends PdfClient
             );
         }
 
-        dd($destination_locations);
+        dd($customer_location);
         // $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         // $destination_locations = $this->extractLocations(
         //     $destination_location_data
@@ -476,16 +476,28 @@ class ToluPdfAssistant extends PdfClient
             }
         }
 
-        dd($city);
         // Country detection
         foreach ($lines as $item) {
             foreach (explode(' ', $item) as $word) {
-                if (GeonamesCountry::getIso(strtoupper($word)) !== null) {
-                    $country = GeonamesCountry::getIso(strtoupper($word));
-                    break;
+                $word = strtoupper(trim($word));
+
+                // ✅ Match and extract prefix if in form FR-57365 or FR57365
+                if (preg_match('/^([A-Z]{2})[-]?\d{4,6}$/', $word, $matches)) {
+                    $code = $matches[1];
+                    if (GeonamesCountry::getIso($code) !== null) {
+                        $country = GeonamesCountry::getIso($code);
+                        break 2; // break both loops
+                    }
+                }
+
+                // ✅ Normal direct code like "FR" or "GB"
+                if (GeonamesCountry::getIso($word) !== null) {
+                    $country = GeonamesCountry::getIso($word);
+                    break 2;
                 }
             }
         }
+
         // Collect street lines (excluding company and city/postal)
         if (count($lines) > 3) {
             $streetParts = array_slice($lines, 1, ($postalIndex > 1 ? $postalIndex - 2 : 2));
