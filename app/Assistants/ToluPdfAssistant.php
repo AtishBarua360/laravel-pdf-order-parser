@@ -37,14 +37,16 @@ class ToluPdfAssistant extends PdfClient
         ];
 
         $cargos = [];
+        $loading_locations = [];
+        $loading_li = [];
+        $destination_li = [];
 
-        $loading_li = null;
         foreach ($lines as $index => $item) {
 
 
             if (Str::startsWith($item, 'Ziegler Ref')) {
                 $ref_li = $index;
-                $order_reference = trim($item[$index + 2]);
+                // $order_reference = trim($item[$index + 2]);
             } else if (Str::startsWith($item, 'VAT NUM:') && !isset($vat_li)) {
                 $vat_li = $index + 2;
 
@@ -59,10 +61,10 @@ class ToluPdfAssistant extends PdfClient
                 $freight_price = uncomma($freight_price);
                 $freight_currency = $this->getCurrency($lines[$index + 2]);
 
-            } else if ($item === 'Loading') {
-                $loading_li = $index;
-            } else if ($item === 'Delivery') {
-                $destination_li = $index;
+            } else if ($item === 'Collection') {
+                $loading_li[] = $index;
+            } else if ($item === 'Clearance' || $item === 'Delivery') {
+                $destination_li[] = $index;
             } else if ($item === 'Observations :') {
                 $observation_li = $index;
             }
@@ -72,10 +74,17 @@ class ToluPdfAssistant extends PdfClient
             array_unshift($customer_location_data, $company_name);
         }
         $customer_location = $this->extractCustomerAddress($customer_location_data);
+
+        foreach ($loading_li as $index => $loadingLi) {
+
+            $end_li = $loading_li[$index + 1] ?? $destination_li[0];
+            $loading_locations[] = $this->extractLocations(
+                array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3)
+            );
+
+        }
+
         dd($customer_location);
-        // $loading_locations = $this->extractLocations(
-        //     array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
-        // );
         // $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         // $destination_locations = $this->extractLocations(
         //     $destination_location_data
@@ -177,26 +186,74 @@ class ToluPdfAssistant extends PdfClient
     {
         $company_address = [];
         $time_interval = [];
+        // 1️⃣ Identify key lines
+        $ref_li = null;
+        $date_li = null;
+        $time_li = null;
         foreach ($loadingData as $index => $item) {
-            if ($item === 'ON:') {
-                $on_li = $index;
-            } else if (Str::startsWith($item, 'Contact:')) {
-                $contact_li = $index;
+            $item = trim($item);
 
-                $contact_person = trim(str_replace('Contact:', '', $item));
-            } else if ($this->isDateTimeString(($item))) {
-                if (isset($time_interval['datetime_from'])) {
-                    $time_interval['datetime_to'] = $item;
-                } else {
-                    $time_interval['datetime_from'] = $item;
+            if ($item === '')
+                continue;
+
+            // Detect REF line
+            elseif (
+                ($item !== 'REF') &&
+                (Str::startsWith(strtoupper($item), 'REF') || Str::contains(strtolower($item), 'pick up t1'))
+            ) {
+                if (!isset($ref_li)) {
+                    $ref_li = $index;
                 }
 
+                $comment = isset($comment)
+                    ? $comment . ', ' . $item
+                    : $item;
+
+                $loadingData[$index] = ''; // prevent re-processing
+            } else if (Str::contains(strtolower($item), 'pallets')) {
+                if (isset($comment)) {
+                    $comment .= ', ' . $item;
+                } else {
+                    $comment = $item;
+                }
             }
 
+            // Detect time range (e.g. 0900-1700)
+            else if (preg_match('/\d{2}[:.]?\d{2}\s*-\s*\d{2}[:.]?\d{2}/', $item)) {
+                $time_li = $index;
+                $time_interval['datetime_from'] = $this->parseTimeRange($item, $loadingData, 'from');
+                $time_interval['datetime_to'] = $this->parseTimeRange($item, $loadingData, 'to');
+                $loadingData[$index] = '';
+            }
+
+            // Detect date line
+            else if (preg_match('/\d{2}\/\d{2}\/\d{4}/', $item)) {
+                $date_li = $index;
+                $date = Carbon::createFromFormat('d/m/Y', $item)->format('Y-m-d');
+                if (isset($time_interval['datetime_from'])) {
+                    $time_interval['datetime_from'] = $date . 'T' . $time_interval['datetime_from'];
+                } else {
+                    $time_interval['datetime_from'] = $date . 'T00:00:00';
+                }
+
+                if (isset($time_interval['datetime_to'])) {
+                    $time_interval['datetime_to'] = $date . 'T' . $time_interval['datetime_to'];
+                } else {
+                    $time_interval['datetime_to'] = $date . 'T23:59:59';
+                }
+                $loadingData[$index] = '';
+            }
         }
-        $onBlock = array_slice($loadingData, $on_li + 2, $contact_li - $on_li - 2);
+        // 2️⃣ Extract address block — start from company name to before postal
+        $onBlock = array_filter($loadingData, fn($v) => (trim($v) !== '' && trim($v) !== 'REF'));
         $company_address = $this->parseAddressBlock($onBlock);
-        $company_address['contact_person'] = $contact_person;
+
+        // 3️⃣ Merge REF/comment if found
+        if (isset($comment)) {
+            $company_address['comment'] = $comment;
+        }
+
+        // 4️⃣ Build the location output
         $loading_locations = [
             [
                 'company_address' => $company_address,
@@ -205,6 +262,25 @@ class ToluPdfAssistant extends PdfClient
         ];
         return $loading_locations;
     }
+
+    /**
+     * Helper to parse time range like "0900-1700" into ISO times
+     */
+    private function parseTimeRange(string $timeRange, array $data, string $part): ?string
+    {
+        $matches = [];
+        if (preg_match('/(\d{2}[:.]?\d{2})\s*-\s*(\d{2}[:.]?\d{2})/', $timeRange, $matches)) {
+            $from = $matches[1];
+            $to = $matches[2];
+
+            $from = strlen($from) === 4 ? substr($from, 0, 2) . ':' . substr($from, 2, 2) : $from;
+            $to = strlen($to) === 4 ? substr($to, 0, 2) . ':' . substr($to, 2, 2) : $to;
+
+            return $part === 'from' ? $from . ':00' : $to . ':00';
+        }
+        return null;
+    }
+
 
     protected function getCurrency(string $value): string|null
     {
@@ -359,6 +435,7 @@ class ToluPdfAssistant extends PdfClient
         $postal = $city = $country = null;
         $streetParts = [];
 
+        // Detect line containing postal pattern (ZIP)
         $postalIndex = collect($lines)->search(
             fn($line) =>
             preg_match('/[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}|[0-9]{4,6}|[A-Z]{2}-[0-9]{4,6}/i', $line)
@@ -366,21 +443,35 @@ class ToluPdfAssistant extends PdfClient
 
         if ($postalIndex !== false) {
             $postalLine = trim($lines[$postalIndex]);
-            $city = $lines[$postalIndex - 1] ?? null;
-            $postal = $postalLine;
+
+            // 🟢 Case 1: City before postal ("Leighton Buzzard, LU7 4UH")
+            if (preg_match('/^(.*?)[, ]+([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})$/i', $postalLine, $matches)) {
+                $city = trim($matches[1]);
+                $postal = trim($matches[2]);
+            }
+            // 🟢 Case 2: Postal before city ("TN25 6GE Ashford")
+            else if (preg_match('/^([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})[\s,]+([A-Za-z].*)$/i', $postalLine, $matches)) {
+                $postal = trim($matches[1]);
+                $city = trim($matches[2]);
+            }
+            // Fallback: separate lines
+            else {
+                $city = $lines[$postalIndex - 1] ?? null;
+                $postal = $postalLine;
+            }
         }
-        //Need to update
-        $country = null;
+
+        // Country detection
         foreach ($lines as $item) {
-            $words = explode(' ', $item);
-            foreach ($words as $word) {
+            foreach (explode(' ', $item) as $word) {
                 if (GeonamesCountry::getIso(strtoupper($word)) !== null) {
                     $country = GeonamesCountry::getIso(strtoupper($word));
-                    break;
+                    break 2;
                 }
             }
         }
 
+        // Collect street lines (excluding company and city/postal)
         $streetParts = array_slice($lines, 1, ($postalIndex > 1 ? $postalIndex - 2 : 2));
 
         $res = [
@@ -397,13 +488,6 @@ class ToluPdfAssistant extends PdfClient
 
         return $res;
     }
-
-
-
-
-
-
-
     public function extractCargos(array $lines)
     {
         $load_li = array_find_key($lines, fn($l) => $l == "Load:");

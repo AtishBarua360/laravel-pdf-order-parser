@@ -292,6 +292,7 @@ class GeonamesCountry
         "United Kingdom" => "GB",
         "United Kingdom of Great Britain and Northern Ireland" => "GB",
         "UK" => "GB",
+        "Uk" => "GB",
         "Grenada" => "GD",
         "Georgia" => "GE",
         "საქართველო" => "GE",
