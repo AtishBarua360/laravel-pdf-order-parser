@@ -92,6 +92,8 @@ class ToluPdfAssistant extends PdfClient
         }
 
         dd($customer_location);
+        dd($loading_locations);
+        dd($destination_locations);
         // $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         // $destination_locations = $this->extractLocations(
         //     $destination_location_data
@@ -172,15 +174,17 @@ class ToluPdfAssistant extends PdfClient
                 $contact_person = trim(Str::after($item, 'Contact:'));
             } elseif (Str::startsWith($item, 'Telephone')) {
                 $telephone_li = $index;
+                $contact_person = trim(Str::replace('Telephone:', '', $item));
+                $contact_person = trim(Str::replace(' ', '', $contact_person));
             }
         }
-        // If we didn’t find a Telephone line, take all non-empty lines
         $addressLines = array_slice($customerData, 0, $telephone_li);
 
         $company_address = $this->parseAddressBlock($addressLines);
 
         $company_address['contact_person'] = $contact_person;
         $company_address['email'] = $email;
+        $company_address['vat_code'] = $vat_code;
         $company_address['vat_code'] = $vat_code;
 
         return [
