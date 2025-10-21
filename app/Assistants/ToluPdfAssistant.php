@@ -80,27 +80,45 @@ class ToluPdfAssistant extends PdfClient
 
             $end_li = $loading_li[$index + 1] ?? $destination_li[0];
             $loading_locations[] = $this->extractLocations(
-                array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3)
+                array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3, true)
             );
         }
         foreach ($destination_li as $index => $destinationLi) {
 
             $end_li = $destination_li[$index + 1] ?? $destination_end_li;
             $destination_locations[] = $this->extractLocations(
-                array_slice($lines, $destinationLi + 1, $end_li - $destinationLi - 2)
+                array_slice($lines, $destinationLi + 1, $end_li - $destinationLi - 2, false)
             );
         }
+
+        foreach ($loading_locations as $loadingData) {
+            if (
+                isset($loadingData['company_address']['comment']) &&
+                Str::contains(strtolower($loadingData['company_address']['comment']), 'pallets')
+            ) {
+                $parts = preg_split('/[,]+/', $loadingData['company_address']['comment'], -1, PREG_SPLIT_NO_EMPTY);
+                $parts = array_map('trim', $parts);
+                $palletCount = 0;
+                foreach ($parts as $part) {
+                    if (Str::contains(strtolower($part), 'pallets')) {
+                        $palletCount += (int) $part;
+                    }
+
+                }
+                $cargos[] = [
+                    'title' => $palletCount . ' Pallets',
+                    'package_count' => $palletCount,
+                    'palletized' => true,
+                    'package_type' => 'EPAL'
+                ];
+            }
+        }
+
+
         // dd($customer_location);
         // dd($loading_locations);
-        dd($destination_locations);
-        // $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
-        // $destination_locations = $this->extractLocations(
-        //     $destination_location_data
-        // );
-
-        // $cargos[] = $this->getCargoData(
-        //     $destination_location_data
-        // );
+        // dd($destination_locations);
+        dd($cargos);
 
         // $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
 
@@ -192,7 +210,7 @@ class ToluPdfAssistant extends PdfClient
         ];
     }
 
-    private function extractLocations(array $loadingData): array
+    private function extractLocations(array $loadingData, bool $loading = true): array
     {
         $company_address = [];
         $time_interval = [];
@@ -361,10 +379,10 @@ class ToluPdfAssistant extends PdfClient
 
         // 4️⃣ Build the location output
         $loading_locations = [
-            [
-                'company_address' => $company_address,
-                'time_interval' => $time_interval
-            ]
+
+            'company_address' => $company_address,
+            'time_interval' => $time_interval
+
         ];
         return $loading_locations;
     }
