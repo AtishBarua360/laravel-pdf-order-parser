@@ -90,9 +90,8 @@ class ToluPdfAssistant extends PdfClient
                 array_slice($lines, $destinationLi + 1, $end_li - $destinationLi - 2)
             );
         }
-
-        dd($customer_location);
-        dd($loading_locations);
+        // dd($customer_location);
+        // dd($loading_locations);
         dd($destination_locations);
         // $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         // $destination_locations = $this->extractLocations(
@@ -209,6 +208,10 @@ class ToluPdfAssistant extends PdfClient
 
             // Detect REF line
             elseif (
+                ($item === 'REF')
+            ) {
+                $loadingData[$index] = ''; // prevent re-processing
+            } elseif (
                 ($item !== 'REF') &&
                 (Str::startsWith(strtoupper($item), 'REF')
                     || Str::contains(strtolower($item), 'pick up t1')
@@ -230,20 +233,83 @@ class ToluPdfAssistant extends PdfClient
                 } else {
                     $comment = $item;
                 }
+                $loadingData[$index] = ''; // prevent re-processing
+
             }
 
-            // Detect time range (e.g. 0900-1700)
-            else if (preg_match('/\d{2}[:.]?\d{2}\s*-\s*\d{2}[:.]?\d{2}/', $item)) {
-                $time_li = $index;
-                $time_interval['datetime_from'] = $this->parseTimeRange($item, $loadingData, 'from');
-                $time_interval['datetime_to'] = $this->parseTimeRange($item, $loadingData, 'to');
-                $loadingData[$index] = '';
+            // 1) Time range or single time with colon/dot or am/pm (e.g., 09:00-17:00, 9am-2pm, BOOKED-06:00 AM)
+            else if (
+                preg_match(
+                    '/\b(\d{1,2}[:.]\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.))' .
+                    '(?:\s*-\s*(\d{1,2}[:.]\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.)))?\b/i',
+                    $item,
+                    $matches
+                )
+            ) {
+                // skip address-like lines
+                if (preg_match('/^\d+\s+[A-Za-zÀ-ÿ]/u', $item) || preg_match('/^\d{4,5}\s+[A-Za-zÀ-ÿ]/u', $item)) {
+                    // looks like "166 Chem. ..." or "95150 TAVERNY"
+                } else {
+                    $time_li = $index;
+
+                    if (!empty($matches[2])) {
+                        $time_interval['datetime_from'] = $this->parseTimeRange($item, $loadingData, 'from');
+                        $time_interval['datetime_to'] = $this->parseTimeRange($item, $loadingData, 'to');
+                    } else {
+                        $time_interval['datetime_from'] = $this->parseTimeRange($item, $loadingData, 'from');
+                        $time_interval['datetime_to'] = '23:59:59';
+                    }
+
+                    $loadingData[$index] = '';
+                }
             }
 
-            // Detect date line
-            else if (preg_match('/\d{2}\/\d{2}\/\d{4}/', $item)) {
+            // 2) Compact numeric time range (e.g., 0900-1700, 900-1730)
+            else if (
+                preg_match('/\b(\d{3,4})\s*-\s*(\d{3,4})\b/', $item, $m)
+            ) {
+                // guard: don’t touch address-like lines (though these typically won’t match because need "digits - digits")
+                if (preg_match('/^\d+\s+[A-Za-zÀ-ÿ]/u', $item)) {
+                    // do nothing
+                } else {
+                    // validate and normalize both tokens
+                    $from = $this->normalizeCompactTime($m[1]); // returns "HH:MM:SS" or null
+                    $to = $this->normalizeCompactTime($m[2]);
+
+                    if ($from && $to) {
+                        $time_li = $index;
+                        $time_interval['datetime_from'] = $from;
+                        $time_interval['datetime_to'] = $to;
+                        $loadingData[$index] = '';
+                    }
+                    // else: ignore invalid (e.g., 2560-9999)
+                }
+            }
+
+            // 3) Single time token without dash (e.g., "06:00 AM")
+            else if (preg_match('/\b\d{1,2}[:.]\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)\b/i', $item, $m)) {
+                if (!preg_match('/^\d+\s+[A-Za-zÀ-ÿ]/u', $item)) {
+                    $time_li = $index;
+                    $time_interval['datetime_from'] = $this->parseTimeRange($item, $loadingData, 'from'); // will pick single time
+                    $time_interval['datetime_to'] = '23:59:59';
+                    $loadingData[$index] = '';
+                }
+            }
+            // Detect "BOOKED FOR 27/06" or "BOOKED FOR 27/06/2025"
+            else if (preg_match('/\bBOOKED\s*FOR\s*(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/i', $item, $bookedMatch)) {
                 $date_li = $index;
-                $date = Carbon::createFromFormat('d/m/Y', $item)->format('Y-m-d');
+
+                // Extract parts
+                $day = str_pad($bookedMatch[1], 2, '0', STR_PAD_LEFT);
+                $month = str_pad($bookedMatch[2], 2, '0', STR_PAD_LEFT);
+                $year = !empty($bookedMatch[3])
+                    ? (strlen($bookedMatch[3]) === 2 ? ('20' . $bookedMatch[3]) : $bookedMatch[3])
+                    : date('Y'); // default current year if not provided
+
+                // Build final date
+                $date = "{$year}-{$month}-{$day}";
+
+                // Apply to time interval
                 if (isset($time_interval['datetime_from'])) {
                     $time_interval['datetime_from'] = $date . 'T' . $time_interval['datetime_from'];
                 } else {
@@ -255,11 +321,37 @@ class ToluPdfAssistant extends PdfClient
                 } else {
                     $time_interval['datetime_to'] = $date . 'T23:59:59';
                 }
+
+                // Remove this line since it's already processed
                 $loadingData[$index] = '';
             }
+
+
+            // Detect date line (e.g. 12/03/2025)
+            else if (preg_match('/\d{2}\/\d{2}\/\d{4}/', $item)) {
+                $date_li = $index;
+
+                $date = Carbon::createFromFormat('d/m/Y', $item)->format('Y-m-d');
+
+                if (isset($time_interval['datetime_from'])) {
+                    $time_interval['datetime_from'] = $date . 'T' . $time_interval['datetime_from'];
+                } else {
+                    $time_interval['datetime_from'] = $date . 'T00:00:00';
+                }
+
+                if (isset($time_interval['datetime_to'])) {
+                    $time_interval['datetime_to'] = $date . 'T' . $time_interval['datetime_to'];
+                } else {
+                    $time_interval['datetime_to'] = $date . 'T23:59:59';
+                }
+
+                $loadingData[$index] = '';
+            }
+
         }
+
         // 2️⃣ Extract address block — start from company name to before postal
-        $onBlock = array_filter($loadingData, fn($v) => (trim($v) !== '' && trim($v) !== 'REF'));
+        $onBlock = array_filter($loadingData, fn($v) => (trim($v) !== ''));
         $company_address = $this->parseAddressBlock($onBlock);
 
         // 3️⃣ Merge REF/comment if found
@@ -277,23 +369,77 @@ class ToluPdfAssistant extends PdfClient
         return $loading_locations;
     }
 
+    private function normalizeCompactTime(string $t): ?string
+    {
+        // 900 -> 09:00, 1730 -> 17:30
+        $len = strlen($t);
+        if ($len === 3) {
+            $h = (int) substr($t, 0, 1);
+            $m = (int) substr($t, 1, 2);
+        } elseif ($len === 4) {
+            $h = (int) substr($t, 0, 2);
+            $m = (int) substr($t, 2, 2);
+        } else {
+            return null;
+        }
+
+        if ($h < 0 || $h > 23 || $m < 0 || $m > 59) {
+            return null;
+        }
+
+        return sprintf('%02d:%02d:00', $h, $m);
+    }
+
+
     /**
      * Helper to parse time range like "0900-1700" into ISO times
      */
     private function parseTimeRange(string $timeRange, array $data, string $part): ?string
     {
         $matches = [];
-        if (preg_match('/(\d{2}[:.]?\d{2})\s*-\s*(\d{2}[:.]?\d{2})/', $timeRange, $matches)) {
-            $from = $matches[1];
-            $to = $matches[2];
+        // Match any valid time range (with or without AM/PM, with or without colon)
+        if (
+            preg_match(
+                '/\b(\d{1,4}(?:[:.]?\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)\s*-\s*(\d{1,4}(?:[:.]?\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i',
+                $timeRange,
+                $matches
+            )
+        ) {
+            // Extract correct part
+            $timeStr = strtolower($part === 'from' ? $matches[1] : $matches[2]);
+            $timeStr = trim(str_replace('.', ':', $timeStr)); // normalize . to :
 
-            $from = strlen($from) === 4 ? substr($from, 0, 2) . ':' . substr($from, 2, 2) : $from;
-            $to = strlen($to) === 4 ? substr($to, 0, 2) . ':' . substr($to, 2, 2) : $to;
+            // Handle formats like 0900 or 900 → convert to 09:00
+            if (preg_match('/^\d{3,4}$/', $timeStr)) {
+                if (strlen($timeStr) === 3) {
+                    $timeStr = '0' . substr($timeStr, 0, 1) . ':' . substr($timeStr, 1);
+                } else {
+                    $timeStr = substr($timeStr, 0, 2) . ':' . substr($timeStr, 2);
+                }
+            }
 
-            return $part === 'from' ? $from . ':00' : $to . ':00';
+            // Append missing minutes if only hour is given (like 9am)
+            if (preg_match('/^\d{1,2}(am|pm)$/', $timeStr)) {
+                $timeStr = preg_replace('/(am|pm)/', ':00$1', $timeStr);
+            }
+
+            try {
+                // Parse using Carbon (automatically handles am/pm and 24-hour)
+                $time = Carbon::parse($timeStr)->format('H:i:s');
+                return $time;
+            } catch (\Exception $e) {
+                info('⚠️ Time parse failed', [
+                    'input' => $timeStr,
+                    'range' => $timeRange,
+                    'error' => $e->getMessage()
+                ]);
+                return null;
+            }
         }
+
         return null;
     }
+
 
 
     protected function getCurrency(string $value): string|null
