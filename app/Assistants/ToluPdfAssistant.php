@@ -41,13 +41,29 @@ class ToluPdfAssistant extends PdfClient
         $destination_locations = [];
         $loading_li = [];
         $destination_li = [];
-
         foreach ($lines as $index => $item) {
 
 
             if (Str::startsWith($item, 'Ziegler Ref')) {
                 $ref_li = $index;
-                // $order_reference = trim($item[$index + 2]);
+
+                $order_reference = trim($lines[$index + 2]);
+            } else if ($item === 'Rate') {
+
+                $line = $lines[$index + 2];
+
+                $currency = $this->getCurrency($line); // e.g. "EUR" or "€"
+                // Remove the currency part and extract only the number
+
+                $amountPart = str_ireplace(
+                    [$currency, '€', '$', '£', 'zł', 'R'],
+                    '',
+                    $line
+                );
+
+                $freight_price = uncomma($amountPart);
+                $freight_currency = $currency;
+
             } else if (Str::startsWith($item, 'VAT NUM:') && !isset($vat_li)) {
                 $vat_li = $index + 2;
 
@@ -70,6 +86,10 @@ class ToluPdfAssistant extends PdfClient
                 $destination_end_li = $index;
             }
         }
+
+        dd($order_reference);
+        dd($freight_currency);
+        dd($freight_price);
         $customer_location_data = array_slice($lines, 0, $ref_li);
         if ($customer_location_data[0] !== $company_name) {
             array_unshift($customer_location_data, $company_name);
@@ -460,13 +480,27 @@ class ToluPdfAssistant extends PdfClient
 
 
 
-    protected function getCurrency(string $value): string|null
+    protected function getCurrency(string $value): ?string
     {
+        // Check by ISO code first
         foreach (self::POSSIBLE_CURRENCIES as $currency) {
             if (stripos($value, $currency) !== false) {
                 return $currency;
             }
         }
+
+        // Then handle common symbols
+        if (strpos($value, '€') !== false)
+            return 'EUR';
+        if (strpos($value, '$') !== false)
+            return 'USD';
+        if (strpos($value, '£') !== false)
+            return 'GBP';
+        if (strpos($value, 'zł') !== false)
+            return 'PLN';
+        if (stripos($value, 'R') !== false && preg_match('/R\s*\d/', $value))
+            return 'ZAR';
+
         return null;
     }
 
