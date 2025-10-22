@@ -60,6 +60,8 @@ class FusmPdfAssistant extends PdfClient
                 $destination_li = $index;
             } else if ($item === 'Observations :') {
                 $observation_li = $index;
+            } else if ($item === 'Instructions') {
+                $instruction_li = $index;
             }
         }
         $customer_location_data = array_slice($lines, $vat_li, $ref_li - $vat_li);
@@ -72,15 +74,17 @@ class FusmPdfAssistant extends PdfClient
         $loading_locations = $this->extractLocations(
             array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
         );
-
         $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         $destination_locations = $this->extractLocations(
             $destination_location_data
         );
+
         $cargos[] = $this->getCargoData(
             $destination_location_data
         );
 
+        $commentData = array_filter(array_slice($lines, $instruction_li + 1, $destination_li - $instruction_li - 1), fn($l) => $l != "");
+        $comment = $this->formatCommentLines($commentData);
         $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
 
         $data = compact(
@@ -93,6 +97,7 @@ class FusmPdfAssistant extends PdfClient
             'transport_numbers',
             'freight_price',
             'freight_currency',
+            'comment'
         );
 
         $this->createOrder($data);
@@ -178,7 +183,6 @@ class FusmPdfAssistant extends PdfClient
     {
         $company_address = [];
         $time_interval = [];
-        dd($loadingData);
         foreach ($loadingData as $index => $item) {
             if ($item === 'ON:') {
                 $on_li = $index;
@@ -186,11 +190,32 @@ class FusmPdfAssistant extends PdfClient
                 $contact_li = $index;
 
                 $contact_person = trim(str_replace('Contact:', '', $item));
-            } else if ($this->isDateTimeString(($item))) {
-                if (isset($time_interval['datetime_from'])) {
-                    $time_interval['datetime_to'] = $this->parseDateTime($item);
-                } else {
+            } else if ($this->isDateTimeString($item)) {
+                // ✅ Handle date line
+                if (!isset($time_interval['datetime_from'])) {
                     $time_interval['datetime_from'] = $this->parseDateTime($item);
+                } else {
+                    $time_interval['datetime_to'] = $this->parseDateTime($item);
+                }
+            } else if ($this->isTimeRangeString($item)) {
+                // ✅ Handle time range line (e.g., "8h00 - 15h00")
+                $times = $this->parseTimeRange($item);
+
+                if (isset($time_interval['datetime_from'])) {
+                    // If datetime_from is date-only → merge time
+                    if (preg_match('/T00:00:00$/', $time_interval['datetime_from'])) {
+                        $time_interval['datetime_from'] = substr($time_interval['datetime_from'], 0, 10) . 'T' . $times['from'];
+                    }
+                }
+
+                if (isset($time_interval['datetime_to'])) {
+                    if (preg_match('/T00:00:00$/', $time_interval['datetime_to'])) {
+                        $time_interval['datetime_to'] = substr($time_interval['datetime_to'], 0, 10) . 'T' . $times['to'];
+                    }
+                }
+                // If no datetime_to exists yet, set it
+                else if (isset($time_interval['datetime_from'])) {
+                    $time_interval['datetime_to'] = substr($time_interval['datetime_from'], 0, 10) . 'T' . $times['to'];
                 }
             }
 
@@ -471,5 +496,56 @@ class FusmPdfAssistant extends PdfClient
     {
         $package_type = static::PACKAGE_TYPE_MAP[$type] ?? "PALLET_OTHER";
         return trans("package_type.{$package_type}");
+    }
+
+    private function isTimeRangeString(string $value): bool
+    {
+        return (bool) preg_match('/\d{1,2}\s*[hH:]?\s*\d{0,2}\s*-\s*\d{1,2}\s*[hH:]?\s*\d{0,2}/', trim($value));
+    }
+
+    private function parseTimeRange(string $value): ?array
+    {
+        $value = str_replace(['H', 'h'], ':', $value);
+        $value = preg_replace('/\s+/', '', $value); // remove spaces
+
+        if (preg_match('/(\d{1,2})(?::(\d{2}))?-(\d{1,2})(?::(\d{2}))?/', $value, $m)) {
+            $fromHour = str_pad($m[1], 2, '0', STR_PAD_LEFT);
+            $fromMin = $m[2] ?? '00';
+            $toHour = str_pad($m[3], 2, '0', STR_PAD_LEFT);
+            $toMin = $m[4] ?? '00';
+
+            return [
+                'from' => "{$fromHour}:{$fromMin}:00",
+                'to' => "{$toHour}:{$toMin}:00",
+            ];
+        }
+        return null;
+    }
+
+    private function formatCommentLines(array $lines): string
+    {
+        $lines = array_map(function ($line) {
+            // Remove only leading '-' and surrounding spaces
+            return preg_replace('/^\s*-\s*/', '', trim($line));
+        }, $lines);
+
+        foreach ($lines as $i => &$line) {
+            $next = $lines[$i + 1] ?? null;
+
+            // If current line ends with '.', keep as is
+            if (str_ends_with($line, '.'))
+                continue;
+
+            // If next line ends with '.', skip adding '.'
+            if ($next && str_ends_with($next, '.'))
+                continue;
+
+            // Otherwise, append '.'
+            $line .= '.';
+        }
+        unset($line);
+
+        // Join all lines into one clean string
+        return preg_replace('/\s+/', ' ', trim(implode(' ', $lines)));
     }
 }
