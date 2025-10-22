@@ -64,20 +64,6 @@ class ToluPdfAssistant extends PdfClient
                 $freight_price = uncomma($amountPart);
                 $freight_currency = $currency;
 
-            } else if (Str::startsWith($item, 'VAT NUM:') && !isset($vat_li)) {
-                $vat_li = $index + 2;
-
-            } else if (Str::startsWith($item, 'Tract.registr.:')) {
-                $truck_number = trim(str_replace('Tract.registr.:', '', $item));
-
-            } else if (Str::startsWith($item, 'Trail.registr.:')) {
-                $trailer_number = trim(str_replace('Trail.registr.:', '', $item));
-
-            } else if ($item === 'SHIPPING PRICE') {
-                $freight_price = preg_replace('/[^0-9,\.]/', '', $lines[$index + 1]);
-                $freight_price = uncomma($freight_price);
-                $freight_currency = $this->getCurrency($lines[$index + 2]);
-
             } else if ($item === 'Collection') {
                 $loading_li[] = $index;
             } else if ($item === 'Clearance' || $item === 'Delivery') {
@@ -86,10 +72,10 @@ class ToluPdfAssistant extends PdfClient
                 $destination_end_li = $index;
             }
         }
-
-        dd($order_reference);
-        dd($freight_currency);
-        dd($freight_price);
+        // dd($lines);
+        // dd($order_reference);
+        // dd($freight_currency);
+        // dd($freight_price);
         $customer_location_data = array_slice($lines, 0, $ref_li);
         if ($customer_location_data[0] !== $company_name) {
             array_unshift($customer_location_data, $company_name);
@@ -138,62 +124,25 @@ class ToluPdfAssistant extends PdfClient
         // dd($customer_location);
         // dd($loading_locations);
         // dd($destination_locations);
-        dd($cargos);
+        // dd($cargos);
 
         // $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
 
-        // $data = compact(
-        //     'customer',
-        //     'loading_locations',
-        //     'destination_locations',
-        //     'attachment_filenames',
-        //     'cargos',
-        //     'order_reference',
-        //     'transport_numbers',
-        //     'freight_price',
-        //     'freight_currency',
-        // );
+        $data = compact(
+            'customer',
+            'loading_locations',
+            'destination_locations',
+            'attachment_filenames',
+            'cargos',
+            'order_reference',
+            // 'transport_numbers',
+            'freight_price',
+            'freight_currency',
+        );
 
-        // $this->createOrder($data);
+        $this->createOrder($data);
     }
 
-    private function getCargoData(array $cargoData): array
-    {
-        $cargos = ['package_type' => 'EPAL'];
-        $cargo_raw_data = [];
-        foreach ($cargoData as $index => $item) {
-            if ($item === 'LM . . . :') {
-                $start_item_li = $index;
-            } else if ($item === 'Pal. nb. :') {
-                array_splice($cargoData, $index, 1);
-            } else if ($item === 'M. nature:') {
-                $end_item_li = $index;
-            } else if ($item === 'OT :') {
-                array_splice($cargoData, $index - 1, 4);
-            }
-        }
-
-        $total_key = $end_item_li - $start_item_li;
-        for ($i = $start_item_li; $i <= $end_item_li; $i++) {
-
-            $cargo_raw_data[$cargoData[$i]] = $cargoData[$i + $total_key + 1];
-        }
-        foreach ($cargo_raw_data as $index => $item) {
-            if ($index === 'M. nature:') {
-                $cargos['title'] = $item;
-            } else if ($index === 'Weight . :') {
-                $cargos['weight'] = uncomma($item);
-            } else if ($index === 'LM . . . :') {
-                $cargos['ldm'] = uncomma($item);
-            } else if ($index === 'Parc. nb :') {
-                $cargos['package_count'] = empty($item) ? 1 : uncomma($item);
-            } else if ($index === 'Type :') {
-                $cargos['package_type'] = $item;
-            }
-        }
-
-        return $cargos;
-    }
     private function extractCustomerAddress(array $customerData): array
     {
         $company_address = [];
@@ -236,8 +185,6 @@ class ToluPdfAssistant extends PdfClient
         $time_interval = [];
         // 1️⃣ Identify key lines
         $ref_li = null;
-        $date_li = null;
-        $time_li = null;
         foreach ($loadingData as $index => $item) {
             $item = trim($item);
 
@@ -288,8 +235,6 @@ class ToluPdfAssistant extends PdfClient
                 if (preg_match('/^\d+\s+[A-Za-zÀ-ÿ]/u', $item) || preg_match('/^\d{4,5}\s+[A-Za-zÀ-ÿ]/u', $item)) {
                     // looks like "166 Chem. ..." or "95150 TAVERNY"
                 } else {
-                    $time_li = $index;
-
                     if (!empty($matches[2])) {
                         $time_interval['datetime_from'] = $this->parseTimeRange($item, $loadingData, 'from');
                         $time_interval['datetime_to'] = $this->parseTimeRange($item, $loadingData, 'to');
@@ -335,8 +280,6 @@ class ToluPdfAssistant extends PdfClient
             }
             // Detect "BOOKED FOR 27/06" or "BOOKED FOR 27/06/2025"
             else if (preg_match('/\bBOOKED\s*FOR\s*(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/i', $item, $bookedMatch)) {
-                $date_li = $index;
-
                 // Extract parts
                 $day = str_pad($bookedMatch[1], 2, '0', STR_PAD_LEFT);
                 $month = str_pad($bookedMatch[2], 2, '0', STR_PAD_LEFT);
@@ -367,8 +310,6 @@ class ToluPdfAssistant extends PdfClient
 
             // Detect date line (e.g. 12/03/2025)
             else if (preg_match('/\d{2}\/\d{2}\/\d{4}/', $item)) {
-                $date_li = $index;
-
                 $date = Carbon::createFromFormat('d/m/Y', $item)->format('Y-m-d');
 
                 if (isset($time_interval['datetime_from'])) {
@@ -388,11 +329,11 @@ class ToluPdfAssistant extends PdfClient
 
         }
 
-        // 2️⃣ Extract address block — start from company name to before postal
+        //  Extract address block — start from company name to before postal
         $onBlock = array_filter($loadingData, fn($v) => (trim($v) !== ''));
         $company_address = $this->parseAddressBlock($onBlock);
 
-        // 3️⃣ Merge REF/comment if found
+        //  Merge REF/comment if found
         if (isset($comment)) {
             $company_address['comment'] = $comment;
         }
@@ -478,8 +419,6 @@ class ToluPdfAssistant extends PdfClient
         return null;
     }
 
-
-
     protected function getCurrency(string $value): ?string
     {
         // Check by ISO code first
@@ -502,143 +441,6 @@ class ToluPdfAssistant extends PdfClient
             return 'ZAR';
 
         return null;
-    }
-
-    // public function extractLocations(array $lines)
-    // {
-    //     $index = 0;
-    //     $location_size = 6;
-    //     $output = [];
-    //     while ($index < count($lines)) {
-    //         $location_lines = array_slice($lines, $index, $location_size);
-    //         $output[] = $this->extractLocation($location_lines);
-    //         $index += $location_size;
-    //     }
-    //     return $output;
-    // }
-
-    public function extractLocation(array $lines)
-    {
-        $datetime = $lines[2];
-        $location = $lines[4];
-
-        return [
-            'company_address' => $this->parseAddressBlock($location),
-            'time' => $this->parseDateTime($datetime),
-        ];
-    }
-
-    public function parseDateTime(string $datetime)
-    {
-        preg_match('/^([0-9\.]+) ?([0-9:]+)?-?([0-9:]+)?$/', $datetime, $matches);
-        if ($matches) {
-            $date_start = $matches[1];
-            if ($matches[2] ?? null) {
-                $date_start .= " " . $matches[2];
-            }
-            $date_start = Carbon::parse($date_start)->toIsoString();
-
-            $date_end = $matches[1];
-            if ($matches[3] ?? null) {
-                $date_end .= " " . $matches[3];
-            }
-            $date_end = Carbon::parse($date_end)->toIsoString();
-        }
-
-        $output = [
-            'datetime_from' => $date_start ?? null,
-            'datetime_to' => $date_end ?? null,
-        ];
-
-        if ($output['datetime_from'] == $output['datetime_to']) {
-            unset($output['datetime_to']);
-        }
-
-        return $output;
-    }
-
-    private function isDateTimeString(string $value): bool
-    {
-        $value = trim($value);
-
-        // Pattern matches dd/mm/yyyy or dd/mm/yy optionally followed by time
-        $pattern = '/^
-        (0[1-9]|[12][0-9]|3[01])    # day
-        [\/\-\.]                     # separator
-        (0[1-9]|1[0-2])              # month
-        [\/\-\.]
-        (\d{2}|\d{4})                # year (2 or 4 digits)
-        (?:\s+                       # optional space before time
-            ([01]?[0-9]|2[0-3])      # hour
-            (:[0-5][0-9]){1,2}       # minutes[:seconds]
-        )?
-        $/x';
-
-        if (!preg_match($pattern, $value)) {
-            return false;
-        }
-
-        // Try parsing with PHP's DateTime
-        $formats = [
-            'd/m/Y H:i:s',
-            'd/m/Y H:i',
-            'd/m/y H:i:s',
-            'd/m/y H:i',
-            'd/m/Y',
-            'd/m/y'
-        ];
-
-        foreach ($formats as $format) {
-            $dt = \DateTime::createFromFormat($format, $value);
-            if ($dt && $dt->format($format) === $value) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public function parseCompanyAddress(string $location): array
-    {
-        // Split and clean
-        $parts = array_map('trim', explode(',', $location));
-        $company = $parts[0] ?? null;
-        $street = $parts[1] ?? null;
-        $region = count($parts) > 3 ? $parts[2] : null;
-        $lastPart = end($parts);
-
-        $country = $postal = $city = null;
-
-        // 🇬🇧 UK-style (GB-SS17 9DY STANFORD)
-        if (preg_match('/^(?<country>[A-Z]{2})[- ](?<postal>[A-Z0-9 ]+)\s+(?<city>[A-Z][A-Z\s]+)$/i', trim($lastPart), $m)) {
-            $country = preg_replace('/[^A-Z]/ui', '', strtoupper($m['country']));
-            $postal = trim($m['postal']);
-            $city = ucwords(strtolower(trim($m['city'])));
-        }
-        // 🇫🇷 France-style (-37530 POCE-SUR-CISSE)
-        elseif (preg_match('/^-?(?<postal>\d{4,6})\s+(?<city>[A-ZÀ-ÿ\- ]+)$/i', trim($lastPart), $m)) {
-            $country = 'FR';
-            $postal = $m['postal'];
-            $city = ucwords(strtolower(trim($m['city'])));
-        }
-
-        // Merge region if relevant
-        if ($region && $city && strcasecmp($region, $city) !== 0) {
-            $city = "{$region}, {$city}";
-        }
-
-        return [
-            'company' => $company,
-            'title' => $company,
-            'street_address' => $street,
-            'city' => $city,
-            'postal_code' => $postal,
-            'country' => $country,
-            'company_code' => null,
-            'vat_code' => null,
-            'email' => null,
-            'contact_person' => null,
-        ];
     }
     private function parseAddressBlock(array $lines): array
     {
@@ -722,52 +524,6 @@ class ToluPdfAssistant extends PdfClient
         }
 
         return $res;
-    }
-    public function extractCargos(array $lines)
-    {
-        $load_li = array_find_key($lines, fn($l) => $l == "Load:");
-        $title = $lines[$load_li + 1];
-
-        $amount_li = array_find_key($lines, fn($l) => $l == "Amount:");
-        $package_count = $lines[$amount_li + 1]
-            ? uncomma($lines[$amount_li + 1])
-            : null;
-
-        $unit_li = array_find_key($lines, fn($l) => $l == "Unit:");
-        $package_type = $this->mapPackageType($lines[$unit_li + 1]);
-
-        $weight_li = array_find_key($lines, fn($l) => $l == "Weight:");
-        $weight = $lines[$weight_li + 1]
-            ? uncomma($lines[$weight_li + 1])
-            : null;
-
-        $ldm_li = array_find_key($lines, callback: fn($l) => $l == "Loadingmeter:");
-        $ldm = $lines[$ldm_li + 1]
-            ? uncomma($lines[$ldm_li + 1])
-            : null;
-
-        $load_ref_li = array_find_key($lines, fn($l) => Str::startsWith($l, "Loading reference:"));
-        $load_ref = $load_ref_li
-            ? explode(': ', $lines[$load_ref_li], 2)[1] ?? null
-            : null;
-
-        $unload_ref_li = array_find_key($lines, fn($l) => Str::startsWith($l, "Unloading reference:"));
-        $unload_ref = $unload_ref_li
-            ? explode(': ', $lines[$unload_ref_li], 2)[1] ?? null
-            : null;
-
-        $number = join('; ', array_filter([$load_ref, $unload_ref]));
-
-        return [
-            [
-                'title' => $title,
-                'number' => $number,
-                'package_count' => $package_count ?? 1,
-                'package_type' => $package_type,
-                'ldm' => $ldm,
-                'weight' => $weight,
-            ]
-        ];
     }
 
     public function mapPackageType(string $type)
