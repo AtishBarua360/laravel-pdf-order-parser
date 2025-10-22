@@ -11,12 +11,6 @@ class FusmPdfAssistant extends PdfClient
 
     const POSSIBLE_CURRENCIES = ["EUR", "USD", "GBP", "PLN", "ZAR"];
 
-    const PACKAGE_TYPE_MAP = [
-        "EW-Paletten" => "PALLET_OTHER",
-        "Ladung" => "CARTON",
-        "Stück" => "OTHER",
-    ];
-
     public static function validateFormat(array $lines)
     {
         return $lines[0] == "Date/Time :"
@@ -200,14 +194,14 @@ class FusmPdfAssistant extends PdfClient
 
                 $contact_person = trim(str_replace('Contact:', '', $item));
             } else if ($this->isDateTimeString($item)) {
-                // ✅ Handle date line
+                // Handle date line
                 if (!isset($time_interval['datetime_from'])) {
                     $time_interval['datetime_from'] = $this->parseDateTime($item);
                 } else {
                     $time_interval['datetime_to'] = $this->parseDateTime($item);
                 }
             } else if ($this->isTimeRangeString($item)) {
-                // ✅ Handle time range line (e.g., "8h00 - 15h00")
+                // Handle time range line (e.g., "8h00 - 15h00")
                 $times = $this->parseTimeRange($item);
 
                 if (isset($time_interval['datetime_from'])) {
@@ -272,7 +266,7 @@ class FusmPdfAssistant extends PdfClient
         foreach ($formats as $format) {
             $dt = \DateTime::createFromFormat($format, $value);
             if ($dt) {
-                // ✅ Fix 2-digit year issue (e.g., 0025 → 2025)
+                // Fix 2-digit year issue (e.g., 0025 → 2025)
                 $year = (int) $dt->format('Y');
                 if ($year < 100) {
                     $year += 2000;
