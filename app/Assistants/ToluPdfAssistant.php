@@ -11,13 +11,6 @@ class ToluPdfAssistant extends PdfClient
 
     private const COMPANY_NAME = 'ZIEGLER UK LTD';
     const POSSIBLE_CURRENCIES = ["EUR", "USD", "GBP", "PLN", "ZAR"];
-
-    const PACKAGE_TYPE_MAP = [
-        "EW-Paletten" => "PALLET_OTHER",
-        "Ladung" => "CARTON",
-        "Stück" => "OTHER",
-    ];
-
     public static function validateFormat(array $lines)
     {
         return $lines[0] == self::COMPANY_NAME;
@@ -72,16 +65,16 @@ class ToluPdfAssistant extends PdfClient
                 $destination_end_li = $index;
             }
         }
-        // dd($lines);
-        // dd($order_reference);
-        // dd($freight_currency);
-        // dd($freight_price);
+
+        //Start Get Customer Data
         $customer_location_data = array_slice($lines, 0, $ref_li);
         if ($customer_location_data[0] !== $company_name) {
             array_unshift($customer_location_data, $company_name);
         }
         $customer_location = $this->extractCustomerAddress($customer_location_data);
+        //End Customer Data
 
+        //Start Loading Location
         foreach ($loading_li as $index => $loadingLi) {
 
             $end_li = $loading_li[$index + 1] ?? $destination_li[0];
@@ -89,6 +82,9 @@ class ToluPdfAssistant extends PdfClient
                 array_slice($lines, $loadingLi + 2, $end_li - $loadingLi - 3, true)
             );
         }
+        //End Loading Location
+
+        //Start Destination location
         foreach ($destination_li as $index => $destinationLi) {
 
             $end_li = $destination_li[$index + 1] ?? $destination_end_li;
@@ -96,7 +92,9 @@ class ToluPdfAssistant extends PdfClient
                 array_slice($lines, $destinationLi + 1, $end_li - $destinationLi - 2, false)
             );
         }
+        //End Loading Location
 
+        //Start cargos
         foreach ($loading_locations as $loadingData) {
             if (
                 isset($loadingData['company_address']['comment']) &&
@@ -119,14 +117,11 @@ class ToluPdfAssistant extends PdfClient
                 ];
             }
         }
+        //End cargos
 
-
-        // dd($customer_location);
-        // dd($loading_locations);
-        // dd($destination_locations);
-        // dd($cargos);
-
-        // $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
+        //Start comment
+        $commentData = array_slice($lines, $destination_end_li);
+        $comment = $this->formatCommentLines($commentData);
 
         $data = compact(
             'customer',
@@ -135,9 +130,9 @@ class ToluPdfAssistant extends PdfClient
             'attachment_filenames',
             'cargos',
             'order_reference',
-            // 'transport_numbers',
             'freight_price',
             'freight_currency',
+            'comment'
         );
 
         $this->createOrder($data);
@@ -526,9 +521,31 @@ class ToluPdfAssistant extends PdfClient
         return $res;
     }
 
-    public function mapPackageType(string $type)
+    private function formatCommentLines(array $lines): string
     {
-        $package_type = static::PACKAGE_TYPE_MAP[$type] ?? "PALLET_OTHER";
-        return trans("package_type.{$package_type}");
+        $lines = array_map(function ($line) {
+            // Remove only leading '-' and surrounding spaces
+            return preg_replace('/^\s*-\s*/', '', trim($line));
+        }, $lines);
+
+        foreach ($lines as $i => &$line) {
+            $next = $lines[$i + 1] ?? null;
+
+            // If current line ends with '.', keep as is
+            if (str_ends_with($line, '.'))
+                continue;
+
+            // If next line ends with '.', skip adding '.'
+            if ($next && str_ends_with($next, '.'))
+                continue;
+
+            // Otherwise, append '.'
+            $line .= '.';
+        }
+        unset($line);
+
+        // Join all lines into one clean string
+        return preg_replace('/\s+/', ' ', trim(implode(' ', $lines)));
     }
+
 }
