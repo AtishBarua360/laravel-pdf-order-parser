@@ -3,11 +3,12 @@
 namespace App\Assistants;
 
 use App\GeonamesCountry;
-use Carbon\Carbon;
 use Illuminate\Support\Str;
 
 class FusmPdfAssistant extends PdfClient
 {
+    private const COMPANY_NAME = 'TRANSALLIANCE TS LTD';
+
     const POSSIBLE_CURRENCIES = ["EUR", "USD", "GBP", "PLN", "ZAR"];
 
     const PACKAGE_TYPE_MAP = [
@@ -19,22 +20,22 @@ class FusmPdfAssistant extends PdfClient
     public static function validateFormat(array $lines)
     {
         return $lines[0] == "Date/Time :"
-            && $lines[4] == "CHARTERING CONFIRMATION";
+            && ($lines[4] == "CHARTERING CONFIRMATION" || $lines[6] == "CHARTERING CONFIRMATION")
+            && array_find_key($lines, fn($l) => $l === self::COMPANY_NAME);
     }
 
     public function processLines(array $lines, ?string $attachment_filename = null)
     {
-        $attachment_filenames = [mb_strtolower($attachment_filename ?? '')];
+        $attachment_filenames = $attachment_filename ? [mb_strtolower($attachment_filename)] : [];
         $truck_number = null;
         $trailer_number = null;
-        $company_name = 'TRANSALLIANCE TS LTD';
         $customer = [
             'side' => 'none',
         ];
         $cargos = [];
 
         $loading_li = null;
-        // dd($lines);
+        $instruction_li = [];
         foreach ($lines as $index => $item) {
 
             if (Str::startsWith($item, 'REF.:')) {
@@ -61,12 +62,12 @@ class FusmPdfAssistant extends PdfClient
             } else if ($item === 'Observations :') {
                 $observation_li = $index;
             } else if ($item === 'Instructions') {
-                $instruction_li = $index;
+                $instruction_li[] = $index;
             }
         }
         $customer_location_data = array_slice($lines, $vat_li, $ref_li - $vat_li);
-        if ($customer_location_data[0] !== $company_name) {
-            array_unshift($customer_location_data, $company_name);
+        if ($customer_location_data[0] !== self::COMPANY_NAME) {
+            array_unshift($customer_location_data, self::COMPANY_NAME);
         }
         $customer_details = $this->extractCustomerAddress($customer_location_data);
         $customer['details'] = $customer_details['company_address'];
@@ -82,9 +83,18 @@ class FusmPdfAssistant extends PdfClient
         $cargos[] = $this->getCargoData(
             $destination_location_data
         );
+        $comment = '';
+        foreach ($instruction_li as $li) {
 
-        $commentData = array_filter(array_slice($lines, $instruction_li + 1, $destination_li - $instruction_li - 1), fn($l) => $l != "");
-        $comment = $this->formatCommentLines($commentData);
+            if ($destination_li > $li) {
+                $commentData = array_filter(array_slice($lines, $li + 1, $destination_li - $li - 1), fn($l) => $l != "");
+                $comment = $this->formatCommentLines($commentData);
+            } elseif (isset($observation_li) && $observation_li > $li) {
+                $commentData = array_filter(array_slice($lines, $li + 1, $observation_li - $li - 1), fn($l) => $l != "");
+                $comment .= ' ' . $this->formatCommentLines($commentData);
+            }
+
+        }
         $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
 
         $data = compact(
@@ -105,7 +115,7 @@ class FusmPdfAssistant extends PdfClient
 
     private function getCargoData(array $cargoData): array
     {
-        $cargos = ['package_type' => 'EPAL'];
+        $cargos = ['package_type' => 'other'];
         $cargo_raw_data = [];
         foreach ($cargoData as $index => $item) {
             if ($item === 'LM . . . :') {
@@ -143,7 +153,6 @@ class FusmPdfAssistant extends PdfClient
 
     private function extractCustomerAddress(array $customerData): array
     {
-        $company_address = [];
         $time_interval = [];
         foreach ($customerData as $index => $item) {
 
@@ -327,48 +336,6 @@ class FusmPdfAssistant extends PdfClient
         return false;
     }
 
-    public function parseCompanyAddress(string $location): array
-    {
-        // Split and clean
-        $parts = array_map('trim', explode(',', $location));
-        $company = $parts[0] ?? null;
-        $street = $parts[1] ?? null;
-        $region = count($parts) > 3 ? $parts[2] : null;
-        $lastPart = end($parts);
-
-        $country = $postal = $city = null;
-
-        // 🇬🇧 UK-style (GB-SS17 9DY STANFORD)
-        if (preg_match('/^(?<country>[A-Z]{2})[- ](?<postal>[A-Z0-9 ]+)\s+(?<city>[A-Z][A-Z\s]+)$/i', trim($lastPart), $m)) {
-            $country = preg_replace('/[^A-Z]/ui', '', strtoupper($m['country']));
-            $postal = trim($m['postal']);
-            $city = ucwords(strtolower(trim($m['city'])));
-        }
-        // 🇫🇷 France-style (-37530 POCE-SUR-CISSE)
-        elseif (preg_match('/^-?(?<postal>\d{4,6})\s+(?<city>[A-ZÀ-ÿ\- ]+)$/i', trim($lastPart), $m)) {
-            $country = 'FR';
-            $postal = $m['postal'];
-            $city = ucwords(strtolower(trim($m['city'])));
-        }
-
-        // Merge region if relevant
-        if ($region && $city && strcasecmp($region, $city) !== 0) {
-            $city = "{$region}, {$city}";
-        }
-
-        return [
-            'company' => $company,
-            'title' => $company,
-            'street_address' => $street,
-            'city' => $city,
-            'postal_code' => $postal,
-            'country' => $country,
-            'company_code' => null,
-            'vat_code' => null,
-            'email' => null,
-            'contact_person' => null,
-        ];
-    }
     private function parseAddressBlock(array $lines): array
     {
         $company = trim($lines[0] ?? '');
@@ -438,64 +405,6 @@ class FusmPdfAssistant extends PdfClient
             }
         }
         return $res;
-    }
-
-
-
-
-
-
-    public function extractCargos(array $lines)
-    {
-        $load_li = array_find_key($lines, fn($l) => $l == "Load:");
-        $title = $lines[$load_li + 1];
-
-        $amount_li = array_find_key($lines, fn($l) => $l == "Amount:");
-        $package_count = $lines[$amount_li + 1]
-            ? uncomma($lines[$amount_li + 1])
-            : null;
-
-        $unit_li = array_find_key($lines, fn($l) => $l == "Unit:");
-        $package_type = $this->mapPackageType($lines[$unit_li + 1]);
-
-        $weight_li = array_find_key($lines, fn($l) => $l == "Weight:");
-        $weight = $lines[$weight_li + 1]
-            ? uncomma($lines[$weight_li + 1])
-            : null;
-
-        $ldm_li = array_find_key($lines, callback: fn($l) => $l == "Loadingmeter:");
-        $ldm = $lines[$ldm_li + 1]
-            ? uncomma($lines[$ldm_li + 1])
-            : null;
-
-        $load_ref_li = array_find_key($lines, fn($l) => Str::startsWith($l, "Loading reference:"));
-        $load_ref = $load_ref_li
-            ? explode(': ', $lines[$load_ref_li], 2)[1] ?? null
-            : null;
-
-        $unload_ref_li = array_find_key($lines, fn($l) => Str::startsWith($l, "Unloading reference:"));
-        $unload_ref = $unload_ref_li
-            ? explode(': ', $lines[$unload_ref_li], 2)[1] ?? null
-            : null;
-
-        $number = join('; ', array_filter([$load_ref, $unload_ref]));
-
-        return [
-            [
-                'title' => $title,
-                'number' => $number,
-                'package_count' => $package_count ?? 1,
-                'package_type' => $package_type,
-                'ldm' => $ldm,
-                'weight' => $weight,
-            ]
-        ];
-    }
-
-    public function mapPackageType(string $type)
-    {
-        $package_type = static::PACKAGE_TYPE_MAP[$type] ?? "PALLET_OTHER";
-        return trans("package_type.{$package_type}");
     }
 
     private function isTimeRangeString(string $value): bool
