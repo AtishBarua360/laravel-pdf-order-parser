@@ -30,14 +30,11 @@ class FusmPdfAssistant extends PdfClient
         $company_name = 'TRANSALLIANCE TS LTD';
         $customer = [
             'side' => 'none',
-            'details' => [
-                'company' => $lines[14],
-                'street_address' => $lines[24] . ', ' . $lines[25]
-            ]
         ];
         $cargos = [];
 
         $loading_li = null;
+        // dd($lines);
         foreach ($lines as $index => $item) {
 
             if (Str::startsWith($item, 'REF.:')) {
@@ -65,15 +62,17 @@ class FusmPdfAssistant extends PdfClient
                 $observation_li = $index;
             }
         }
-        $customer_location_data = array_slice($lines, $vat_li + 1, $ref_li - $vat_li);
+        $customer_location_data = array_slice($lines, $vat_li, $ref_li - $vat_li);
         if ($customer_location_data[0] !== $company_name) {
             array_unshift($customer_location_data, $company_name);
         }
-        $customer_location = $this->extractCustomerAddress($customer_location_data);
+        $customer_details = $this->extractCustomerAddress($customer_location_data);
+        $customer['details'] = $customer_details['company_address'];
 
         $loading_locations = $this->extractLocations(
             array_slice($lines, $loading_li + 1, $destination_li - $loading_li)
         );
+
         $destination_location_data = array_slice($lines, $destination_li + 1, $observation_li - $destination_li);
         $destination_locations = $this->extractLocations(
             $destination_location_data
@@ -83,67 +82,6 @@ class FusmPdfAssistant extends PdfClient
         );
 
         $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
-
-
-        //     'details' => [
-        //         'street_address' => 'Amerling 130',
-        //         'city' => 'Kramsach',
-        //         'postal_code' => '6233',
-        //         'country' => 'AT',
-        //         'vat_code' => 'ATU74076812',
-        //         'contact_person' => $contact,
-        //     ],
-
-
-
-        // $truck_li = array_find_key($lines, fn($l) => $l == "Truck, trailer:");
-        // $truck_number = $lines[$truck_li + 2];
-
-        // $vehicle_li = array_find_key($lines, fn($l) => $l == "Vehicle type:");
-        // if ($truck_li && $vehicle_li) {
-        //     $trailer_li = array_find_key($lines, fn($l, $i) => $i > $truck_li && $i < $vehicle_li && preg_match('/^[A-Z]{2}[0-9]{3}( |$)/', $l));
-        //     $trailer_number = explode(' ', $lines[$trailer_li], 2)[0] ?? null;
-        // }
-
-        // $transport_numbers = join(' / ', array_filter([$truck_number, $trailer_number ?? null]));
-
-        // $freight_li = array_find_key($lines, fn($l) => $l == "Freight rate in €:");
-        // $freight_price = $lines[$freight_li + 2];
-        // $freight_price = preg_replace('/[^0-9,\.]/', '', $freight_price);
-        // $freight_price = uncomma($freight_price);
-        // $freight_currency = 'EUR';
-
-        // $loading_li = array_find_key($lines, fn($l) => $l == "Loading sequence:");
-        // $unloading_li = array_find_key($lines, fn($l) => $l == "Unloading sequence:");
-        // $regards_li = array_find_key($lines, fn($l) => $l == "Best regards");
-
-        // $loading_locations = $this->extractLocations(
-        //     array_slice($lines, $loading_li + 1, $unloading_li - 1 - $loading_li)
-        // );
-
-        // $destination_locations = $this->extractLocations(
-        //     array_slice($lines, $unloading_li + 1, $regards_li - 1 - $unloading_li)
-        // );
-
-        // $contact_li = array_find_key($lines, fn($l) => Str::startsWith($l, 'Contactperson: '));
-        // $contact = explode(': ', $lines[$contact_li], 2)[1];
-
-        // $customer = [
-        //     'side' => 'none',
-        //     'details' => [
-        //         'company' => 'Access Logistic GmbH',
-        //         'street_address' => 'Amerling 130',
-        //         'city' => 'Kramsach',
-        //         'postal_code' => '6233',
-        //         'country' => 'AT',
-        //         'vat_code' => 'ATU74076812',
-        //         'contact_person' => $contact,
-        //     ],
-        // ];
-
-        // $cargos = $this->extractCargos($lines);
-
-        // $attachment_filenames = [mb_strtolower($attachment_filename ?? '')];
 
         $data = compact(
             'customer',
@@ -202,7 +140,6 @@ class FusmPdfAssistant extends PdfClient
     {
         $company_address = [];
         $time_interval = [];
-
         foreach ($customerData as $index => $item) {
 
             if (Str::startsWith($item, 'Contact:')) {
@@ -241,6 +178,7 @@ class FusmPdfAssistant extends PdfClient
     {
         $company_address = [];
         $time_interval = [];
+        dd($loadingData);
         foreach ($loadingData as $index => $item) {
             if ($item === 'ON:') {
                 $on_li = $index;
@@ -250,11 +188,10 @@ class FusmPdfAssistant extends PdfClient
                 $contact_person = trim(str_replace('Contact:', '', $item));
             } else if ($this->isDateTimeString(($item))) {
                 if (isset($time_interval['datetime_from'])) {
-                    $time_interval['datetime_to'] = $item;
+                    $time_interval['datetime_to'] = $this->parseDateTime($item);
                 } else {
-                    $time_interval['datetime_from'] = $item;
+                    $time_interval['datetime_from'] = $this->parseDateTime($item);
                 }
-
             }
 
         }
@@ -280,58 +217,49 @@ class FusmPdfAssistant extends PdfClient
         return null;
     }
 
-    // public function extractLocations(array $lines)
-    // {
-    //     $index = 0;
-    //     $location_size = 6;
-    //     $output = [];
-    //     while ($index < count($lines)) {
-    //         $location_lines = array_slice($lines, $index, $location_size);
-    //         $output[] = $this->extractLocation($location_lines);
-    //         $index += $location_size;
-    //     }
-    //     return $output;
-    // }
-
-    public function extractLocation(array $lines)
+    private function parseDateTime(string $value): string
     {
-        $datetime = $lines[2];
-        $location = $lines[4];
+        $value = trim($value);
 
-        return [
-            'company_address' => $this->parseAddressBlock($location),
-            'time' => $this->parseDateTime($datetime),
-        ];
-    }
+        // Replace h/H with ":" for consistent time parsing
+        $value = preg_replace('/([0-9])[hH]([0-9]{2})/', '$1:$2', $value);
 
-    public function parseDateTime(string $datetime)
-    {
-        preg_match('/^([0-9\.]+) ?([0-9:]+)?-?([0-9:]+)?$/', $datetime, $matches);
-        if ($matches) {
-            $date_start = $matches[1];
-            if ($matches[2] ?? null) {
-                $date_start .= " " . $matches[2];
-            }
-            $date_start = Carbon::parse($date_start)->toIsoString();
+        // Normalize delimiters
+        $value = str_replace(['-', '.'], '/', $value);
 
-            $date_end = $matches[1];
-            if ($matches[3] ?? null) {
-                $date_end .= " " . $matches[3];
-            }
-            $date_end = Carbon::parse($date_end)->toIsoString();
-        }
-
-        $output = [
-            'datetime_from' => $date_start ?? null,
-            'datetime_to' => $date_end ?? null,
+        // Supported formats
+        $formats = [
+            'd/m/Y H:i',
+            'd/m/Y',
+            'd/m/y H:i',
+            'd/m/y',
         ];
 
-        if ($output['datetime_from'] == $output['datetime_to']) {
-            unset($output['datetime_to']);
+        foreach ($formats as $format) {
+            $dt = \DateTime::createFromFormat($format, $value);
+            if ($dt) {
+                // ✅ Fix 2-digit year issue (e.g., 0025 → 2025)
+                $year = (int) $dt->format('Y');
+                if ($year < 100) {
+                    $year += 2000;
+                    $dt->setDate($year, (int) $dt->format('m'), (int) $dt->format('d'));
+                }
+
+                // If no explicit time was provided, default to midnight
+                $timePart = strpos($value, ':') !== false ? '' : 'T00:00:00';
+                return $dt->format('Y-m-d\T') . ($timePart ? '00:00:00' : $dt->format('H:i:s'));
+            }
         }
 
-        return $output;
+        // Fallback: try native parsing
+        try {
+            $dt = new \DateTime($value);
+            return $dt->format('Y-m-d\TH:i:s');
+        } catch (\Exception $e) {
+            return $value; // fallback raw if not parseable
+        }
     }
+
 
     private function isDateTimeString(string $value): bool
     {
