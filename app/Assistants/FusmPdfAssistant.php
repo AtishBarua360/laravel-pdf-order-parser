@@ -250,7 +250,7 @@ class FusmPdfAssistant extends PdfClient
         $value = trim($value);
 
         // Replace h/H with ":" for consistent time parsing
-        $value = preg_replace('/([0-9])[hH]([0-9]{2})/', '$1:$2', $value);
+        $value = preg_replace('/([0-9]{1,2})[hH]([0-9]{1,2})/', '$1:$2', $value);
 
         // Normalize delimiters
         $value = str_replace(['-', '.'], '/', $value);
